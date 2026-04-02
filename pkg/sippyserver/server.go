@@ -1269,13 +1269,6 @@ func (s *Server) printReportDate(w http.ResponseWriter, req *http.Request) {
 	api.RespondWithJSON(http.StatusOK, w, map[string]interface{}{"pinnedDateTime": reportDate})
 }
 
-func (s *Server) printCanaryReportFromDB(w http.ResponseWriter, req *http.Request) {
-	release := s.getParamOrFail(w, req, "release")
-	if release != "" {
-		api.PrintCanaryTestsFromDB(release, w, s.db)
-	}
-}
-
 func (s *Server) jsonVariantsReportFromDB(w http.ResponseWriter, req *http.Request) {
 	release := s.getParamOrFail(w, req, "release")
 	if release != "" {
@@ -2604,12 +2597,6 @@ func (s *Server) Serve() {
 			Description:  "Reports on variants",
 			Capabilities: []string{LocalDBCapability},
 			HandlerFunc:  s.jsonVariantsReportFromDB,
-		},
-		{
-			EndpointPath: "/api/canary",
-			Description:  "Displays canary report from database",
-			Capabilities: []string{LocalDBCapability},
-			HandlerFunc:  s.printCanaryReportFromDB,
 		},
 		{
 			EndpointPath: "/api/report_date",
