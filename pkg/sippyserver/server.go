@@ -1144,7 +1144,7 @@ func (s *Server) jsonJobBugsFromDB(w http.ResponseWriter, req *http.Request) {
 func (s *Server) jsonTestsReportFromDB(w http.ResponseWriter, req *http.Request) {
 	release := s.getParamOrFail(w, req, "release")
 	if release != "" {
-		api.PrintTestsJSONFromDB(release, w, req, s.db, s.cache)
+		api.PrintTestsJSONFromDB(w, req, s.db, s.cache, release)
 	}
 }
 
