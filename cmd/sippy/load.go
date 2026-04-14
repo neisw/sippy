@@ -152,7 +152,7 @@ func NewLoadCommand() *cobra.Command {
 			}
 
 			releaseConfigs := []sippyv1.Release{}
-		
+
 			// initializing a bigquery client different from the normal one
 			opCtx, ctx := bqcachedclient.OpCtxForCronEnv(ctx, "load")
 			bqc, bigqueryErr := bqcachedclient.New(
@@ -197,6 +197,12 @@ func NewLoadCommand() *cobra.Command {
 					}
 					if dbErr != nil {
 						return errors.Wrap(dbErr, "CRITICAL error getting postgres client which prevents regression-cache loading")
+					}
+					if cacheErr != nil {
+						return errors.Wrap(cacheErr, "couldn't get cache client")
+					}
+					if f.CacheFlags.RedisURL == "" {
+						return fmt.Errorf("--redis-url is required")
 					}
 
 					views, err := f.ComponentReadinessFlags.ParseViewsFile()
