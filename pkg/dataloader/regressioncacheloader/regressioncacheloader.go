@@ -63,7 +63,10 @@ func New(
 	crTimeRoundingFactor time.Duration,
 	regressionStore componentreadiness.RegressionStore,
 	variantJunitTableOverrides []configv1.VariantJunitTableOverride,
-) *RegressionCacheLoader {
+) (*RegressionCacheLoader, error) {
+	if regressionStore == nil {
+		return nil, fmt.Errorf("regressionStore must not be nil")
+	}
 
 	return &RegressionCacheLoader{
 		dbc:                        dbc,
@@ -75,7 +78,7 @@ func New(
 		regressionStore:            regressionStore,
 		variantJunitTableOverrides: variantJunitTableOverrides,
 		logger:                     log.WithField("loader", "regression-cache"),
-	}
+	}, nil
 }
 
 func (l *RegressionCacheLoader) Name() string {
@@ -133,30 +136,28 @@ func (l *RegressionCacheLoader) Load() {
 
 	// Close regressions per-release (only if no errors for that release),
 	// then resolve triages globally once all releases are processed.
-	if l.regressionStore != nil {
-		anyErrors := false
-		for release, result := range releaseResults {
-			if result.hadErrors {
-				l.logger.Infof("skipping regression closing for release %s due to errors", release)
-				anyErrors = true
-				continue
-			}
-			if err := l.closeStaleRegressions(release, result.activeIDs); err != nil {
-				l.errs = append(l.errs, err)
-				anyErrors = true
-			}
+	anyErrors := false
+	for release, result := range releaseResults {
+		if result.hadErrors {
+			l.logger.Infof("skipping regression closing for release %s due to errors", release)
+			anyErrors = true
+			continue
 		}
+		if err := l.closeStaleRegressions(release, result.activeIDs); err != nil {
+			l.errs = append(l.errs, err)
+			anyErrors = true
+		}
+	}
 
-		// ResolveTriages is a global operation (not per-release), so we only run it
-		// once after all releases have been processed, and only if no releases had errors.
-		if !anyErrors {
-			l.logger.Info("resolving triages with all regressions closed")
-			if err := l.regressionStore.ResolveTriages(); err != nil {
-				l.errs = append(l.errs, fmt.Errorf("error resolving triages: %w", err))
-			}
-		} else {
-			l.logger.Info("skipping global triage resolution due to errors in one or more releases")
+	// ResolveTriages is a global operation (not per-release), so we only run it
+	// once after all releases have been processed, and only if no releases had errors.
+	if !anyErrors {
+		l.logger.Info("resolving triages with all regressions closed")
+		if err := l.regressionStore.ResolveTriages(); err != nil {
+			l.errs = append(l.errs, fmt.Errorf("error resolving triages: %w", err))
 		}
+	} else {
+		l.logger.Info("skipping global triage resolution due to errors in one or more releases")
 	}
 }
 
@@ -183,7 +184,7 @@ func (l *RegressionCacheLoader) processView(
 
 	// Step 2: Sync regressions if enabled
 	var activeRegressions []*models.TestRegression
-	if view.RegressionTracking.Enabled && l.regressionStore != nil {
+	if view.RegressionTracking.Enabled {
 		rLog := l.logger.WithField("release", view.SampleRelease.Name)
 		activeRegressions, err = componentreadiness.SyncRegressionsForReport(
 			l.regressionStore, view, rLog, report)
@@ -240,7 +241,7 @@ func (l *RegressionCacheLoader) processView(
 	}
 
 	// Step 7: Sync job runs from the in-memory test details directly
-	if view.RegressionTracking.Enabled && l.regressionStore != nil && len(activeRegressions) > 0 {
+	if view.RegressionTracking.Enabled && len(activeRegressions) > 0 {
 		if err := l.syncJobRunsFromReports(vLog, activeRegressions, tdReports); err != nil {
 			return nil, fmt.Errorf("error syncing job runs for view %s: %w", view.Name, err)
 		}

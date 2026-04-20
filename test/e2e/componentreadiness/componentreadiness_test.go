@@ -70,7 +70,7 @@ func TestRegressionCacheLoader(t *testing.T) {
 	regressionStore := componentreadiness.NewPostgresRegressionStore(dbc, nil)
 
 	// Create and run the loader
-	loader := regressioncacheloader.New(
+	loader, err := regressioncacheloader.New(
 		dbc, bqClient,
 		&configv1.SippyConfig{},
 		sippyViews.ComponentReadiness,
@@ -79,6 +79,7 @@ func TestRegressionCacheLoader(t *testing.T) {
 		regressionStore,
 		nil, // no variant junit table overrides for e2e
 	)
+	require.NoError(t, err)
 
 	t.Log("running regression cache loader...")
 	loader.Load()

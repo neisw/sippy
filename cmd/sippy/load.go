@@ -210,12 +210,16 @@ func NewLoadCommand() *cobra.Command {
 					}
 					regressionStore := componentreadiness.NewPostgresRegressionStore(dbc, jiraClient)
 
-					loaders = append(loaders, regressioncacheloader.New(
+					rcl, err := regressioncacheloader.New(
 						dbc, bqc, config, views.ComponentReadiness, releaseConfigs,
 						f.ComponentReadinessFlags.CRTimeRoundingFactor,
 						regressionStore,
 						config.ComponentReadinessConfig.VariantJunitTableOverrides,
-					))
+					)
+					if err != nil {
+						return errors.Wrap(err, "error creating regression cache loader")
+					}
+					loaders = append(loaders, rcl)
 				}
 
 				if l == "releases" {
