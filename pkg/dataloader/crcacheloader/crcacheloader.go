@@ -193,7 +193,7 @@ func (l *ComponentReadinessCacheLoader) primeCacheForView(ctx context.Context, v
 			newTIDOpts.BaseOverrideRelease = report.Analyses[0].BaseStats.Release
 		}
 		genCacheKey.TestIDOptions = []reqopts.TestIdentification{newTIDOpts}
-		tempKey := api.NewCacheSpec(genCacheKey, "TestDetailsReport~", nil)
+		tempKey := api.NewCacheSpec(genCacheKey, componentreadiness.TestDetailsReportCacheKeyPrefix, nil)
 		cacheKey, err := tempKey.GetCacheKey()
 		if err != nil {
 			strErrors = append(strErrors, fmt.Sprintf("error: '%s' getting cache key for: %+v", err.Error(), tempKey))

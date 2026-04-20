@@ -337,7 +337,7 @@ func (l *RegressionCacheLoader) cacheTestDetailsReports(
 			newTIDOpts.BaseOverrideRelease = report.Analyses[0].BaseStats.Release
 		}
 		genCacheKey.TestIDOptions = []reqopts.TestIdentification{newTIDOpts}
-		tempKey := api.NewCacheSpec(genCacheKey, "TestDetailsReport~", nil)
+		tempKey := api.NewCacheSpec(genCacheKey, componentreadiness.TestDetailsReportCacheKeyPrefix, nil)
 		cacheKey, err := tempKey.GetCacheKey()
 		if err != nil {
 			*strErrors = append(*strErrors, fmt.Sprintf("error getting cache key: %s", err.Error()))
