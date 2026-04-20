@@ -4,7 +4,6 @@ import (
 	"testing"
 	"time"
 
-	"cloud.google.com/go/civil"
 	"github.com/openshift/sippy/pkg/apis/api/componentreport/crtest"
 	"github.com/openshift/sippy/pkg/apis/api/componentreport/testdetails"
 	"github.com/openshift/sippy/pkg/db/models"
@@ -13,8 +12,8 @@ import (
 )
 
 func TestFailedJobRunsFromTestDetails(t *testing.T) {
-	startTime1 := civil.DateTime{Date: civil.Date{Year: 2026, Month: 4, Day: 10}, Time: civil.Time{Hour: 12}}
-	startTime2 := civil.DateTime{Date: civil.Date{Year: 2026, Month: 4, Day: 11}, Time: civil.Time{Hour: 8}}
+	startTime1 := time.Date(2026, 4, 10, 12, 0, 0, 0, time.UTC)
+	startTime2 := time.Date(2026, 4, 11, 8, 0, 0, 0, time.UTC)
 
 	tests := []struct {
 		name           string
@@ -164,11 +163,8 @@ func TestFailedJobRunsFromTestDetails(t *testing.T) {
 	}
 }
 
-func TestFailedJobRunsFromTestDetails_StartTimeConversion(t *testing.T) {
-	startTime := civil.DateTime{
-		Date: civil.Date{Year: 2026, Month: 4, Day: 10},
-		Time: civil.Time{Hour: 14, Minute: 30, Second: 0},
-	}
+func TestFailedJobRunsFromTestDetails_StartTimePreserved(t *testing.T) {
+	startTime := time.Date(2026, 4, 10, 14, 30, 0, 0, time.UTC)
 	report := testdetails.Report{
 		Analyses: []testdetails.Analysis{
 			{
@@ -189,6 +185,5 @@ func TestFailedJobRunsFromTestDetails_StartTimeConversion(t *testing.T) {
 	}
 	runs := FailedJobRunsFromTestDetails(report)
 	require.Len(t, runs, 1)
-	expected := time.Date(2026, 4, 10, 14, 30, 0, 0, time.UTC)
-	assert.Equal(t, expected, runs[0].StartTime)
+	assert.Equal(t, startTime, runs[0].StartTime)
 }

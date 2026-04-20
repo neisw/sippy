@@ -9,6 +9,7 @@ import (
 
 	"github.com/openshift/sippy/pkg/api"
 	"github.com/openshift/sippy/pkg/api/componentreadiness"
+	bqprovider "github.com/openshift/sippy/pkg/api/componentreadiness/dataprovider/bigquery"
 	"github.com/openshift/sippy/pkg/api/componentreadiness/utils"
 	crtype "github.com/openshift/sippy/pkg/apis/api/componentreport"
 	"github.com/openshift/sippy/pkg/apis/api/componentreport/crtest"
@@ -454,8 +455,8 @@ func (l *RegressionCacheLoader) buildGenerator(
 	}
 
 	generator := componentreadiness.NewComponentReportGenerator(
-		l.bqClient, reqOpts, l.dbc,
-		l.config.ComponentReadinessConfig.VariantJunitTableOverrides,
+		bqprovider.NewBigQueryProvider(l.bqClient, l.config.ComponentReadinessConfig.VariantJunitTableOverrides),
+		reqOpts, l.dbc,
 		l.releases, "")
 	return &generator, nil
 }
