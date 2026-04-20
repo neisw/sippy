@@ -380,10 +380,9 @@ func GetTriagePotentialMatches(triage *models.Triage, allRegressions []models.Te
 func determinePotentialMatch(regression models.TestRegression, triage *models.Triage) *PotentialMatch {
 	match := &PotentialMatch{}
 
-	// Build a set of the candidate regression's job run IDs for fast lookup
-	candidateRunIDs := make(map[string]bool, len(regression.JobRuns))
+	candidateRunIDs := sets.New[string]()
 	for _, jr := range regression.JobRuns {
-		candidateRunIDs[jr.ProwJobRunID] = true
+		candidateRunIDs.Insert(jr.ProwJobRunID)
 	}
 
 	for _, tr := range triage.Regressions {
@@ -411,14 +410,14 @@ func determinePotentialMatch(regression models.TestRegression, triage *models.Tr
 
 // calculateJobRunOverlap checks if the candidate regression's job runs overlap with
 // a triage regression's job runs. Returns nil if there is no overlap.
-func calculateJobRunOverlap(candidateRunIDs map[string]bool, triageRegression models.TestRegression) *JobRunOverlap {
-	if len(candidateRunIDs) == 0 || len(triageRegression.JobRuns) == 0 {
+func calculateJobRunOverlap(candidateRunIDs sets.Set[string], triageRegression models.TestRegression) *JobRunOverlap {
+	if candidateRunIDs.Len() == 0 || len(triageRegression.JobRuns) == 0 {
 		return nil
 	}
 
 	var sharedIDs []string
 	for _, jr := range triageRegression.JobRuns {
-		if candidateRunIDs[jr.ProwJobRunID] {
+		if candidateRunIDs.Has(jr.ProwJobRunID) {
 			sharedIDs = append(sharedIDs, jr.ProwJobRunID)
 		}
 	}
@@ -428,7 +427,7 @@ func calculateJobRunOverlap(candidateRunIDs map[string]bool, triageRegression mo
 	}
 
 	// Use the smaller set as the denominator so overlap is relative to the regression with fewer runs
-	denominator := len(candidateRunIDs)
+	denominator := candidateRunIDs.Len()
 	if len(triageRegression.JobRuns) < denominator {
 		denominator = len(triageRegression.JobRuns)
 	}

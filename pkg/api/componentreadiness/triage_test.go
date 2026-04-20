@@ -12,6 +12,7 @@ import (
 	v1 "github.com/openshift/sippy/pkg/apis/sippy/v1"
 	"github.com/openshift/sippy/pkg/db/models"
 	"github.com/stretchr/testify/assert"
+	"k8s.io/apimachinery/pkg/util/sets"
 )
 
 func TestCalculateEditDistance(t *testing.T) {
@@ -124,7 +125,7 @@ func TestIsSimilarTestName(t *testing.T) {
 func TestCalculateJobRunOverlap(t *testing.T) {
 	tests := []struct {
 		name            string
-		candidateRunIDs map[string]bool
+		candidateRunIDs sets.Set[string]
 		triageReg       models.TestRegression
 		expectNil       bool
 		expectShared    []string
@@ -132,19 +133,19 @@ func TestCalculateJobRunOverlap(t *testing.T) {
 	}{
 		{
 			name:            "no candidate runs",
-			candidateRunIDs: map[string]bool{},
+			candidateRunIDs: sets.New[string](),
 			triageReg:       models.TestRegression{JobRuns: []models.RegressionJobRun{{ProwJobRunID: "run-1"}}},
 			expectNil:       true,
 		},
 		{
 			name:            "no triage runs",
-			candidateRunIDs: map[string]bool{"run-1": true},
+			candidateRunIDs: sets.New[string]("run-1"),
 			triageReg:       models.TestRegression{},
 			expectNil:       true,
 		},
 		{
 			name:            "no overlap",
-			candidateRunIDs: map[string]bool{"run-1": true, "run-2": true},
+			candidateRunIDs: sets.New[string]("run-1", "run-2"),
 			triageReg: models.TestRegression{JobRuns: []models.RegressionJobRun{
 				{ProwJobRunID: "run-3"},
 				{ProwJobRunID: "run-4"},
@@ -153,7 +154,7 @@ func TestCalculateJobRunOverlap(t *testing.T) {
 		},
 		{
 			name:            "full overlap same size",
-			candidateRunIDs: map[string]bool{"run-1": true, "run-2": true},
+			candidateRunIDs: sets.New[string]("run-1", "run-2"),
 			triageReg: models.TestRegression{JobRuns: []models.RegressionJobRun{
 				{ProwJobRunID: "run-1"},
 				{ProwJobRunID: "run-2"},
@@ -163,7 +164,7 @@ func TestCalculateJobRunOverlap(t *testing.T) {
 		},
 		{
 			name:            "partial overlap",
-			candidateRunIDs: map[string]bool{"run-1": true, "run-2": true, "run-3": true, "run-4": true},
+			candidateRunIDs: sets.New[string]("run-1", "run-2", "run-3", "run-4"),
 			triageReg: models.TestRegression{JobRuns: []models.RegressionJobRun{
 				{ProwJobRunID: "run-1"},
 				{ProwJobRunID: "run-2"},
@@ -175,7 +176,7 @@ func TestCalculateJobRunOverlap(t *testing.T) {
 		},
 		{
 			name:            "overlap uses smaller set as denominator",
-			candidateRunIDs: map[string]bool{"run-1": true, "run-2": true},
+			candidateRunIDs: sets.New[string]("run-1", "run-2"),
 			triageReg: models.TestRegression{JobRuns: []models.RegressionJobRun{
 				{ProwJobRunID: "run-1"},
 				{ProwJobRunID: "run-2"},

@@ -204,18 +204,11 @@ func NewLoadCommand() *cobra.Command {
 						return fmt.Errorf("no component readiness views provided")
 					}
 
-					// Build the regression store if any view uses regression tracking
-					var regressionStore componentreadiness.RegressionStore
-					for _, view := range views.ComponentReadiness {
-						if view.RegressionTracking.Enabled {
-							jiraClient, jErr := f.JiraFlags.GetJiraClient()
-							if jErr != nil {
-								return errors.Wrap(jErr, "CRITICAL error getting jira client which prevents regression tracking")
-							}
-							regressionStore = componentreadiness.NewPostgresRegressionStore(dbc, jiraClient)
-							break
-						}
+					jiraClient, jErr := f.JiraFlags.GetJiraClient()
+					if jErr != nil {
+						return errors.Wrap(jErr, "CRITICAL error getting jira client which prevents regression tracking")
 					}
+					regressionStore := componentreadiness.NewPostgresRegressionStore(dbc, jiraClient)
 
 					loaders = append(loaders, regressioncacheloader.New(
 						dbc, bqc, config, views.ComponentReadiness, releaseConfigs,

@@ -27,7 +27,7 @@ import (
 )
 
 // MaxRegressionsToCache caps the number of test details reports we cache to protect Redis memory.
-// When regressions exceed this limit, test details caching and job run tracking are both skipped.
+// When regressions exceed this limit, test details caching is skipped, though we still do the query for job run tracking.
 const MaxRegressionsToCache = 300
 
 // RegressionCacheLoader is a unified loader that handles both component readiness cache priming
@@ -37,9 +37,6 @@ const MaxRegressionsToCache = 300
 // Behavior is controlled by per-view flags:
 //   - view.PrimeCache.Enabled: cache component report and test details in Redis
 //   - view.RegressionTracking.Enabled: sync regressions to Postgres, track job runs
-//
-// For backward compatibility, the legacy --loader flags "component-readiness-cache" and
-// "regression-tracker" both map to this single loader.
 type RegressionCacheLoader struct {
 	dbc    *db.DB
 	errs   []error
@@ -52,7 +49,7 @@ type RegressionCacheLoader struct {
 	releases             []apiv1.Release
 	crTimeRoundingFactor time.Duration
 
-	// Regression tracking deps (nil if not needed)
+	// Regression tracking deps
 	regressionStore            componentreadiness.RegressionStore
 	variantJunitTableOverrides []configv1.VariantJunitTableOverride
 }
