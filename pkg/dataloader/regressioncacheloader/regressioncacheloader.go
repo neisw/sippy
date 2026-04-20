@@ -199,8 +199,10 @@ func (l *RegressionCacheLoader) processView(
 
 	// The MaxRegressionsToCache limit only applies to caching, not to the test details query
 	// itself. We always run the query so regression job run tracking works regardless.
-	cacheResults := view.PrimeCache.Enabled && len(regressedTests) <= MaxRegressionsToCache
-	if view.PrimeCache.Enabled && len(regressedTests) > MaxRegressionsToCache {
+	primeCache := view.PrimeCache.Enabled
+	maxRegressionsExceeded := len(regressedTests) > MaxRegressionsToCache
+	cacheResults := primeCache && !maxRegressionsExceeded
+	if primeCache && maxRegressionsExceeded {
 		vLog.Warnf("skipping test_details caching: %d regressions exceeds max (%d), job run tracking will still proceed",
 			len(regressedTests), MaxRegressionsToCache)
 	}
