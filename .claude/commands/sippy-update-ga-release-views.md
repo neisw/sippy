@@ -66,17 +66,17 @@ You will guide the user through the following steps (skipping steps where argume
 
    **D. Increase pity_factor** (for views of the GA release itself):
    - Find views where `sample_release.release` equals the GA release
-   - If `pity_factor` is set to `5` (i.e. 5%), change it to `10` (i.e. 10%)
+   - Set `pity_factor` to `10` (i.e. 10%)
    - **Rationale**: A higher pity factor reduces sensitivity of component readiness for GA releases, filtering out borderline regressions that are unlikely to be actioned when fewer people are watching
 
    **E. Increase minimum_failure** (for views of the GA release itself):
    - Find views where `sample_release.release` equals the GA release
-   - If `minimum_failure` is set to `3`, change it to `4`
+   - Set `minimum_failure` to `4`
    - **Rationale**: Requiring more failures before flagging a regression reduces noise from flaky or low-volume test failures in GA streams
 
    **F. Decrease pass_rate_required_new_tests** (for views of the GA release itself):
    - Find views where `sample_release.release` equals the GA release
-   - If `pass_rate_required_new_tests` is set to `95`, change it to `90`
+   - Set `pass_rate_required_new_tests` to `90`
    - **Rationale**: Relaxing the pass rate threshold for new tests in GA releases reduces noise from tests that are mostly passing but occasionally flaky, while still catching genuinely broken new tests
 
    - **IMPORTANT**: Preserve YAML formatting (double quotes, `{ }` spacing, indentation)
