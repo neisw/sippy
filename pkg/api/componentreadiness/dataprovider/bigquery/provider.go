@@ -181,7 +181,7 @@ func (p *BigQueryProvider) QueryBaseJobRunTestStatus(ctx context.Context, reqOpt
 
 	result, errs := apiPkg.GetDataFromCacheOrGenerate[crstatus.TestJobRunStatuses](
 		ctx, p.client.Cache, reqOptions.CacheOption,
-		apiPkg.NewCacheSpec(generator, "BaseJobRunTestStatus~", &reqOptions.BaseRelease.End),
+		apiPkg.NewCacheSpec(generator, "BaseJobRunTestStatusV2~", &reqOptions.BaseRelease.End),
 		generator.QueryTestStatus, crstatus.TestJobRunStatuses{})
 	if len(errs) > 0 {
 		return nil, errs
@@ -279,7 +279,7 @@ func (p *BigQueryProvider) querySampleJobRunTestStatusForTable(ctx context.Conte
 	generator := NewSampleTestDetailsQueryGenerator(p.client, reqOptions, allJobVariants, includeVariants, start, end, junitTable)
 	result, errs := apiPkg.GetDataFromCacheOrGenerate[crstatus.TestJobRunStatuses](
 		ctx, p.client.Cache, reqOptions.CacheOption,
-		apiPkg.NewCacheSpec(generator, "SampleJobRunTestStatus~", &end),
+		apiPkg.NewCacheSpec(generator, "SampleJobRunTestStatusV2~", &end),
 		generator.QueryTestStatus, crstatus.TestJobRunStatuses{})
 	if len(errs) > 0 {
 		return nil, errs
