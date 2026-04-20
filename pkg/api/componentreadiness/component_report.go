@@ -37,9 +37,9 @@ import (
 )
 
 const (
-	explanationNoRegression          = "No significant regressions found"
-	ComponentReportCacheKeyPrefix    = "ComponentReport~"
-	TestDetailsReportCacheKeyPrefix  = "TestDetailsReport~"
+	explanationNoRegression         = "No significant regressions found"
+	ComponentReportCacheKeyPrefix   = "ComponentReport~"
+	TestDetailsReportCacheKeyPrefix = "TestDetailsReport~"
 )
 
 type GeneratorType string
