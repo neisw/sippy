@@ -11,10 +11,8 @@ import (
 	"cloud.google.com/go/bigquery"
 	"github.com/openshift/sippy/pkg/api"
 	"github.com/openshift/sippy/pkg/api/componentreadiness"
-	bqprovider "github.com/openshift/sippy/pkg/api/componentreadiness/dataprovider/bigquery"
-	"github.com/openshift/sippy/pkg/apis/cache"
 	sippyv1 "github.com/openshift/sippy/pkg/apis/sippy/v1"
-	"github.com/openshift/sippy/pkg/dataloader/crcacheloader"
+	"github.com/openshift/sippy/pkg/dataloader/regressioncacheloader"
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
@@ -147,6 +145,9 @@ func NewLoadCommand() *cobra.Command {
 			}
 
 			cacheClient, cacheErr := f.CacheFlags.GetCacheClient()
+			if cacheErr != nil {
+				log.WithError(cacheErr).Info("cache client not available, proceeding without caching")
+			}
 			releaseConfigs := []sippyv1.Release{}
 
 			// initializing a bigquery client different from the normal one
@@ -178,19 +179,21 @@ func NewLoadCommand() *cobra.Command {
 				promPusher.Collector(loadMetricGauge)
 			}
 
+			var regressionCacheAdded bool
 			for _, l := range f.Loaders {
-				if l == "component-readiness-cache" {
+				// TODO: remove "component-readiness-cache" and "regression-tracker" once the cronjob
+				// manifests are updated to use "regression-cache".
+				if l == "component-readiness-cache" || l == "regression-tracker" || l == "regression-cache" {
+					if regressionCacheAdded {
+						continue
+					}
+					regressionCacheAdded = true
+
 					if bigqueryErr != nil {
-						return errors.Wrap(bigqueryErr, "CRITICAL error getting BigQuery client which prevents cache loading")
+						return errors.Wrap(bigqueryErr, "CRITICAL error getting BigQuery client which prevents regression-cache loading")
 					}
 					if dbErr != nil {
-						return dbErr
-					}
-					if cacheErr != nil {
-						return errors.Wrap(err, "couldn't get cache client")
-					}
-					if f.CacheFlags.RedisURL == "" {
-						return fmt.Errorf("--redis-url is required")
+						return errors.Wrap(dbErr, "CRITICAL error getting postgres client which prevents regression-cache loading")
 					}
 
 					views, err := f.ComponentReadinessFlags.ParseViewsFile()
@@ -200,9 +203,23 @@ func NewLoadCommand() *cobra.Command {
 					if len(views.ComponentReadiness) == 0 {
 						return fmt.Errorf("no component readiness views provided")
 					}
-					loaders = append(loaders, crcacheloader.New(dbc, cacheClient, bqc, config, views, releaseConfigs,
-						f.ComponentReadinessFlags.CRTimeRoundingFactor))
 
+					jiraClient, jErr := f.JiraFlags.GetJiraClient()
+					if jErr != nil {
+						return errors.Wrap(jErr, "CRITICAL error getting jira client which prevents regression tracking")
+					}
+					regressionStore := componentreadiness.NewPostgresRegressionStore(dbc, jiraClient)
+
+					rcl, err := regressioncacheloader.New(
+						dbc, bqc, config, views.ComponentReadiness, releaseConfigs,
+						f.ComponentReadinessFlags.CRTimeRoundingFactor,
+						regressionStore,
+						config.ComponentReadinessConfig.VariantJunitTableOverrides,
+					)
+					if err != nil {
+						return errors.Wrap(err, "error creating regression cache loader")
+					}
+					loaders = append(loaders, rcl)
 				}
 
 				if l == "releases" {
@@ -292,39 +309,6 @@ func NewLoadCommand() *cobra.Command {
 					loaders = append(loaders, fgLoader)
 				}
 
-				if l == "regression-tracker" {
-					if bigqueryErr != nil {
-						return errors.Wrap(bigqueryErr, "CRITICAL error getting BigQuery client which prevents regression tracking")
-					}
-					if dbErr != nil {
-						return errors.Wrap(dbErr, "CRITICAL error getting postgres client which prevents regression tracking")
-					}
-					cacheOpts := cache.NewStandardCROptions(f.ComponentReadinessFlags.CRTimeRoundingFactor)
-
-					views, err := f.ComponentReadinessFlags.ParseViewsFile()
-					if err != nil {
-						return errors.Wrap(err, "error parsing views file")
-					}
-					if len(views.ComponentReadiness) == 0 {
-						return fmt.Errorf("no component readiness views provided")
-					}
-					releases, err := api.GetReleases(context.TODO(), bqc, false)
-					if err != nil {
-						log.WithError(err).Fatal("error querying releases")
-					}
-
-					jiraClient, err := f.JiraFlags.GetJiraClient()
-					if err != nil {
-						return errors.Wrap(err, "CRITICAL error getting jira client which prevents regression tracking")
-					}
-
-					regressionTracker := componentreadiness.NewRegressionTracker(
-						bqprovider.NewBigQueryProvider(bqc, config.ComponentReadinessConfig.VariantJunitTableOverrides), dbc, cacheOpts, releases,
-						componentreadiness.NewPostgresRegressionStore(dbc, jiraClient),
-						views.ComponentReadiness,
-						false)
-					loaders = append(loaders, regressionTracker)
-				}
 			}
 
 			// Run loaders with the metrics wrapper
