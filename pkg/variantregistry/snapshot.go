@@ -15,33 +15,37 @@ import (
 type JobVariants map[string]map[string]string
 
 type VariantSnapshot struct {
-	config *v1.SippyConfig
-	views  []crview.View
-	log    logrus.FieldLogger
+	config                       *v1.SippyConfig
+	views                        []crview.View
+	syntheticReleaseJobOverrides map[string]string
+	log                          logrus.FieldLogger
 }
 
-func NewVariantSnapshot(config *v1.SippyConfig, views []crview.View, log logrus.FieldLogger) *VariantSnapshot {
+func NewVariantSnapshot(config *v1.SippyConfig, views []crview.View, syntheticReleaseJobOverrides map[string]string, log logrus.FieldLogger) *VariantSnapshot {
 	return &VariantSnapshot{
-		config: config,
-		views:  views,
-		log:    log,
+		config:                       config,
+		views:                        views,
+		syntheticReleaseJobOverrides: syntheticReleaseJobOverrides,
+		log:                          log,
 	}
 }
 
-func (s *VariantSnapshot) Identify() JobVariants {
+func (s *VariantSnapshot) Identify() (JobVariants, error) {
 	newVariants := map[string]map[string]string{}
-	variantSyncer := OCPVariantLoader{config: s.config, views: s.views}
+	variantSyncer := OCPVariantLoader{config: s.config, views: s.views, syntheticReleaseJobOverrides: s.syntheticReleaseJobOverrides}
 	for _, releaseCfg := range s.config.Releases {
 		for job := range releaseCfg.Jobs {
 			if isIgnoredJob(job) {
 				continue
 			}
-
+			if _, done := newVariants[job]; done {
+				continue
+			}
 			newVariants[job] = variantSyncer.calculateVariantsForJob(s.log, job, nil, syntheticClusterDataOS(job))
 		}
 	}
 
-	return newVariants
+	return newVariants, nil
 }
 
 func syntheticClusterDataOS(jobName string) clusterDataOS {
@@ -69,7 +73,10 @@ func (s *VariantSnapshot) Load(path string) (JobVariants, error) {
 }
 
 func (s *VariantSnapshot) Save(path string) error {
-	newVariants := s.Identify()
+	newVariants, err := s.Identify()
+	if err != nil {
+		return err
+	}
 	y, err := yaml.Marshal(newVariants)
 	if err != nil {
 		return err
