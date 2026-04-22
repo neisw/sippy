@@ -441,6 +441,11 @@ func (f *LoadFlags) prowLoader(ctx context.Context, dbc *db.DB, sippyConfig *v1.
 		}
 	}
 
+	syntheticReleaseJobOverrides, err := variantregistry.BuildSyntheticReleaseJobOverrides(sippyConfig.Releases, releaseConfigs)
+	if err != nil {
+		return nil, fmt.Errorf("error building synthetic release job overrides: %w", err)
+	}
+
 	var loadSince *time.Time
 	if f.ProwLoadSince != "" {
 		t, err := parseProwLoadSince(f.ProwLoadSince)
@@ -462,7 +467,8 @@ func (f *LoadFlags) prowLoader(ctx context.Context, dbc *db.DB, sippyConfig *v1.
 		sippyConfig,
 		ghCommenter,
 		promPusher,
-		loadSince), nil
+		loadSince,
+		syntheticReleaseJobOverrides), nil
 }
 
 // parseProwLoadSince parses a time value that is either an absolute RFC3339 timestamp

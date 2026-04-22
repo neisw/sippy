@@ -30,14 +30,15 @@ import (
 
 // OCPVariantLoader generates a mapping of job names to their variant map for all known jobs.
 type OCPVariantLoader struct {
-	BigQueryClient  *bigquery.Client
-	bqOpContext     bqlabel.OperationalContext
-	config          *v1.SippyConfig
-	views           []crview.View
-	bigQueryProject string
-	bigQueryDataSet string
-	bigQueryTable   string
-	gcsClient       *storage.Client
+	BigQueryClient               *bigquery.Client
+	bqOpContext                  bqlabel.OperationalContext
+	config                       *v1.SippyConfig
+	views                        []crview.View
+	syntheticReleaseJobOverrides map[string]string
+	bigQueryProject              string
+	bigQueryDataSet              string
+	bigQueryTable                string
+	gcsClient                    *storage.Client
 }
 
 func NewOCPVariantLoader(
@@ -47,16 +48,18 @@ func NewOCPVariantLoader(
 	gcsClient *storage.Client,
 	config *v1.SippyConfig,
 	views []crview.View,
+	syntheticReleaseJobOverrides map[string]string,
 ) *OCPVariantLoader {
 	return &OCPVariantLoader{
-		BigQueryClient:  bigQueryClient,
-		bqOpContext:     opCtx,
-		gcsClient:       gcsClient,
-		config:          config,
-		views:           views,
-		bigQueryProject: bigQueryProject,
-		bigQueryDataSet: bigQueryDataSet,
-		bigQueryTable:   bigQueryTable,
+		BigQueryClient:               bigQueryClient,
+		bqOpContext:                  opCtx,
+		gcsClient:                    gcsClient,
+		config:                       config,
+		views:                        views,
+		syntheticReleaseJobOverrides: syntheticReleaseJobOverrides,
+		bigQueryProject:              bigQueryProject,
+		bigQueryDataSet:              bigQueryDataSet,
+		bigQueryTable:                bigQueryTable,
 	}
 }
 
@@ -675,7 +678,6 @@ func setNetworkStack(_ logrus.FieldLogger, variants map[string]string, jobName s
 }
 
 func (v *OCPVariantLoader) setRelease(logger logrus.FieldLogger, variants map[string]string, jobName string) {
-	// Presubmits on main branch are set as "Presubmits"
 	if presubmitRegex.MatchString(jobName) {
 		variants[VariantRelease] = "Presubmits"
 		return
@@ -702,7 +704,6 @@ func (v *OCPVariantLoader) setRelease(logger logrus.FieldLogger, variants map[st
 		variants[VariantFromReleaseMinor] = strconv.Itoa(fromRelease.Segments()[1])
 	}
 
-	// for jobs that look like upgrades, determine upgrade variant
 	if upgradeRegex.MatchString(jobName) {
 		switch {
 		case upgradeOutOfChangeRegex.MatchString(jobName):
@@ -714,10 +715,14 @@ func (v *OCPVariantLoader) setRelease(logger logrus.FieldLogger, variants map[st
 		}
 	} else {
 		variants[VariantUpgrade] = VariantNoValue
-		// Wipe out the FromRelease if it's not an upgrade job.
 		delete(variants, VariantFromRelease)
 		delete(variants, VariantFromReleaseMajor)
 		delete(variants, VariantFromReleaseMinor)
+	}
+
+	// Synthetic release claims take priority over other release logic.
+	if release, ok := v.syntheticReleaseJobOverrides[jobName]; ok {
+		variants[VariantRelease] = release
 	}
 }
 
@@ -1158,21 +1163,13 @@ func setNetwork(jLog logrus.FieldLogger, variants map[string]string, jobName str
 	}
 
 	// Get release version from variants
-	release, exists := variants[VariantFromRelease]
-	if !exists {
-		release, exists = variants[VariantRelease] // fall back to main release for non-upgrade jobs
-	}
-	if !exists {
-		jLog.Warning("release version not found, unable to guess container runtime")
+	releaseVersion := releaseVersionFromVariants(jLog, variants)
+	if releaseVersion == nil {
+		return
 	}
 
 	// Determine network based on release
 	ovnBecomesDefault, _ := version.NewVersion("4.12")
-	releaseVersion, err := version.NewVersion(release)
-	if err != nil {
-		jLog.WithField("release", release).Warning("could not parse release version, unable to guess network type")
-		return
-	}
 
 	if releaseVersion.GreaterThanOrEqual(ovnBecomesDefault) {
 		variants[VariantNetwork] = "ovn"
@@ -1201,27 +1198,43 @@ func setContainerRuntime(jLog logrus.FieldLogger, variants map[string]string, jo
 	}
 
 	// Get release version from variants
-	release, exists := variants[VariantFromRelease]
-	if !exists {
-		release, exists = variants[VariantRelease] // fall back to main release for non-upgrade jobs
-	}
-	if !exists {
-		jLog.Warning("release version not found, unable to guess container runtime")
+	releaseVersion := releaseVersionFromVariants(jLog, variants)
+	if releaseVersion == nil {
+		return
 	}
 
 	// Determine container runtime based on release
 	crunBecomesDefault, _ := version.NewVersion("4.18")
-	releaseVersion, err := version.NewVersion(release)
-	if err != nil {
-		jLog.WithField("release", release).Warning("could not parse release version for container runtime type")
-		return
-	}
 
 	if releaseVersion.GreaterThanOrEqual(crunBecomesDefault) {
 		variants[VariantContainerRuntime] = "crun"
 	} else {
 		variants[VariantContainerRuntime] = "runc"
 	}
+}
+
+func releaseVersionFromVariants(jLog logrus.FieldLogger, variants map[string]string) *version.Version {
+	release, exists := variants[VariantFromRelease]
+	if !exists {
+		release, exists = variants[VariantRelease]
+	}
+	if exists {
+		if v, err := version.NewVersion(release); err == nil {
+			return v
+		}
+	}
+
+	// Synthetic releases will not be able to determine the release version using the VariantRelease or VariantFromRelease
+	// We can attempt to determine it via the VariantReleaseMajor and VariantReleaseMinor variants.
+	if major, ok := variants[VariantReleaseMajor]; ok {
+		if minor, ok := variants[VariantReleaseMinor]; ok {
+			if v, err := version.NewVersion(major + "." + minor); err == nil {
+				return v
+			}
+		}
+	}
+	jLog.Warning("release version not found, unable to determine version-dependent variant")
+	return nil
 }
 
 func setCGroupMode(_ logrus.FieldLogger, variants map[string]string, jobName string) {

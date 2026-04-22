@@ -78,6 +78,7 @@ type Release struct { // this is the Release that gets cached
 	PreviousRelease      string
 	Capabilities         map[ReleaseCapability]bool
 	Product              string
+	Synthetic            bool
 }
 
 type VariantMapping struct {
@@ -138,6 +139,12 @@ type ReleaseRow struct { // a Release as it emerges from the BQ DB
 
 	// Capabilities contains capabilities available with each release:
 	Capabilities []ReleaseCapability `bigquery:"Capabilities"`
+
+	// Synthetic indicates this release does not correspond to a specific OCP
+	// version (e.g., rosa-stage, aro-integration). Jobs listed in a synthetic
+	// release's Jobs map are pinned to that release, taking priority over
+	// name-based version matching.
+	Synthetic bool `bigquery:"Synthetic"`
 }
 
 type ReleaseCapability string

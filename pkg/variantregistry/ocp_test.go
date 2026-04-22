@@ -9,12 +9,14 @@ import (
 
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
 
 	"github.com/openshift/sippy/pkg/apis/api"
 	"github.com/openshift/sippy/pkg/apis/api/componentreport/crview"
 	"github.com/openshift/sippy/pkg/apis/api/componentreport/reqopts"
 	v1 "github.com/openshift/sippy/pkg/apis/config/v1"
+	sippyv1 "github.com/openshift/sippy/pkg/apis/sippy/v1"
 	"github.com/openshift/sippy/pkg/flags/configflags"
 	"github.com/openshift/sippy/pkg/util/sets"
 )
@@ -1828,6 +1830,184 @@ func TestVariantSyncer(t *testing.T) {
 	}
 }
 
+func TestSyntheticReleaseVariants(t *testing.T) {
+	config := &v1.SippyConfig{
+		Releases: map[string]v1.ReleaseConfig{
+			"rosa-stage": {
+				Jobs: map[string]bool{
+					"periodic-ci-openshift-osde2e-main-nightly-4.22-osd-aws":                                         true,
+					"periodic-ci-openshift-osde2e-main-nightly-4.16-osd-aws":                                         true,
+					"periodic-ci-openshift-osde2e-main-nightly-4.22-rosa-classic-sts":                                true,
+					"periodic-ci-openshift-osde2e-main-aws-stage-informing-default":                                  true,
+					"periodic-ci-openshift-osde2e-main-osd-aws-upgrade-latest-default-y-minus-1-to-latest-default-y": true,
+					"periodic-ci-openshift-osde2e-main-osd-aws-upgrade-latest-default-y-plus-1-to-latest-y":          true,
+					"periodic-ci-openshift-osde2e-main-osd-aws-upgrade-latest-default-y-to-latest-y-plus-1":          true,
+					"periodic-ci-openshift-osde2e-main-osd-aws-upgrade-latest-default-z-minus-1-to-latest-default-z": true,
+					"periodic-ci-openshift-osde2e-main-rosa-stage-e2e-byo-vpc-proxy-install":                         true,
+					"periodic-ci-openshift-osde2e-main-rosa-stage-e2e-byo-vpc-proxy-postinstall":                     true,
+					"periodic-ci-openshift-osde2e-main-nightly-4.21-rosa-hcp":                                        true,
+					"periodic-ci-openshift-osde2e-main-nightly-4.21-osd-aws":                                         true,
+					"periodic-ci-openshift-osde2e-main-nightly-4.21-rosa-classic-sts":                                true,
+					"periodic-ci-openshift-osde2e-main-nightly-4.20-osd-aws":                                         true,
+					"periodic-ci-openshift-osde2e-main-nightly-4.20-rosa-classic-sts":                                true,
+					"periodic-ci-openshift-osde2e-main-nightly-4.19-osd-aws":                                         true,
+					"periodic-ci-openshift-osde2e-main-nightly-4.19-rosa-classic-sts":                                true,
+					"periodic-ci-openshift-osde2e-main-nightly-4.18-osd-aws":                                         true,
+					"periodic-ci-openshift-osde2e-main-nightly-4.18-rosa-classic-sts":                                true,
+					"periodic-ci-openshift-osde2e-main-nightly-4.17-osd-aws":                                         true,
+					"periodic-ci-openshift-osde2e-main-nightly-4.17-rosa-classic-sts":                                true,
+					"periodic-ci-openshift-osde2e-main-nightly-4.16-rosa-classic-sts":                                true,
+				},
+			},
+			"4.22": {
+				Jobs: map[string]bool{
+					"periodic-ci-openshift-osde2e-main-nightly-4.22-osd-aws":        true,
+					"periodic-ci-openshift-release-master-nightly-4.22-e2e-aws-ovn": true,
+				},
+			},
+		},
+	}
+
+	syntheticReleaseJobOverrides, err := BuildSyntheticReleaseJobOverrides(config.Releases, []sippyv1.Release{
+		{Release: "4.22"},
+		{Release: "rosa-stage", Synthetic: true},
+	})
+	require.NoError(t, err)
+	loader := &OCPVariantLoader{config: config, syntheticReleaseJobOverrides: syntheticReleaseJobOverrides}
+
+	tests := []struct {
+		name            string
+		job             string
+		expectedRelease string
+		expectedMajor   string
+		expectedMinor   string
+	}{
+		{
+			name:            "version in name overridden by synthetic release",
+			job:             "periodic-ci-openshift-osde2e-main-nightly-4.22-osd-aws",
+			expectedRelease: "rosa-stage",
+			expectedMajor:   "4",
+			expectedMinor:   "22",
+		},
+		{
+			name:            "older version in name overridden by synthetic release",
+			job:             "periodic-ci-openshift-osde2e-main-nightly-4.16-osd-aws",
+			expectedRelease: "rosa-stage",
+			expectedMajor:   "4",
+			expectedMinor:   "16",
+		},
+		{
+			name:            "no version in name still assigned to synthetic release",
+			job:             "periodic-ci-openshift-osde2e-main-aws-stage-informing-default",
+			expectedRelease: "rosa-stage",
+		},
+		{
+			name:            "rosa-classic-sts with version assigned to synthetic release",
+			job:             "periodic-ci-openshift-osde2e-main-nightly-4.22-rosa-classic-sts",
+			expectedRelease: "rosa-stage",
+			expectedMajor:   "4",
+			expectedMinor:   "22",
+		},
+		{
+			name:            "job not in synthetic release uses name-based extraction",
+			job:             "periodic-ci-openshift-release-master-nightly-4.22-e2e-aws-ovn",
+			expectedRelease: "4.22",
+			expectedMajor:   "4",
+			expectedMinor:   "22",
+		},
+		{
+			name:            "job in rosa-stage with rosa-stage in the name",
+			job:             "periodic-ci-openshift-osde2e-main-rosa-stage-e2e-byo-vpc-proxy-install",
+			expectedRelease: "rosa-stage",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			variants := loader.calculateVariantsForJob(
+				logrus.WithField("source", "TestSyntheticReleaseVariants"),
+				tt.job, nil, clusterDataOS{})
+			assert.Equal(t, tt.expectedRelease, variants[VariantRelease])
+			if tt.expectedMajor != "" {
+				assert.Equal(t, tt.expectedMajor, variants[VariantReleaseMajor])
+			}
+			if tt.expectedMinor != "" {
+				assert.Equal(t, tt.expectedMinor, variants[VariantReleaseMinor])
+			}
+		})
+	}
+}
+
+func TestReleaseVersionFromVariants(t *testing.T) {
+	log := logrus.WithField("test", "TestReleaseVersionFromVariants")
+
+	tests := []struct {
+		name            string
+		variants        map[string]string
+		expectedVersion string
+		expectedNil     bool
+	}{
+		{
+			name: "standard release",
+			variants: map[string]string{
+				VariantRelease: "4.22",
+			},
+			expectedVersion: "4.22",
+		},
+		{
+			name: "upgrade job uses FromRelease",
+			variants: map[string]string{
+				VariantRelease:     "4.22",
+				VariantFromRelease: "4.21",
+			},
+			expectedVersion: "4.21",
+		},
+		{
+			name: "synthetic release falls back to major/minor",
+			variants: map[string]string{
+				VariantRelease:      "rosa-stage",
+				VariantReleaseMajor: "4",
+				VariantReleaseMinor: "22",
+			},
+			expectedVersion: "4.22",
+		},
+		{
+			name: "synthetic upgrade job uses FromRelease",
+			variants: map[string]string{
+				VariantRelease:      "rosa-stage",
+				VariantFromRelease:  "4.21",
+				VariantReleaseMajor: "4",
+				VariantReleaseMinor: "22",
+			},
+			expectedVersion: "4.21",
+		},
+		{
+			name:        "no version info returns nil",
+			variants:    map[string]string{},
+			expectedNil: true,
+		},
+		{
+			name: "synthetic release with no major/minor returns nil",
+			variants: map[string]string{
+				VariantRelease: "rosa-stage",
+			},
+			expectedNil: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := releaseVersionFromVariants(log, tt.variants)
+			if tt.expectedNil {
+				assert.Nil(t, result)
+				return
+			}
+			require.NotNil(t, result)
+			assert.Equal(t, tt.expectedVersion, result.Original())
+		})
+	}
+}
+
 // TestVariantsSnapshot regenerates variants against the OCP config, and then compares against
 // a previously taken snapshot. If variants changed, it will fail and report an error. You can
 // run `make update-variants` to update and accept the changes. This lets you easily see the impact
@@ -1845,11 +2025,29 @@ func TestVariantsSnapshot(t *testing.T) {
 	err = yaml.Unmarshal(viewsData, &views)
 	assert.NoError(t, err)
 
+	releaseConfigs := []sippyv1.Release{
+		{Release: "4.17"},
+		{Release: "4.18"},
+		{Release: "4.19"},
+		{Release: "aro-integration", Synthetic: true},
+		{Release: "aro-production", Synthetic: true},
+		{Release: "aro-stage", Synthetic: true},
+		{Release: "automation", Synthetic: true},
+		{Release: "ocp-hypershift", Synthetic: true},
+		{Release: "rosa-integration", Synthetic: true},
+		{Release: "rosa-production", Synthetic: true},
+		{Release: "rosa-stage", Synthetic: true},
+		{Release: "rrp-integration", Synthetic: true},
+	}
+	syntheticReleaseJobOverrides, err := BuildSyntheticReleaseJobOverrides(cfg.Releases, releaseConfigs)
+	require.NoError(t, err)
+
 	log := logrus.WithField("test", "TestVariantsSnapshot")
 
-	snapshot := NewVariantSnapshot(cfg, views.ComponentReadiness, log)
+	snapshot := NewVariantSnapshot(cfg, views.ComponentReadiness, syntheticReleaseJobOverrides, log)
 
-	newVariants := snapshot.Identify()
+	newVariants, err := snapshot.Identify()
+	assert.NoError(t, err)
 	oldVariants, err := snapshot.Load("snapshot.yaml")
 	assert.NoError(t, err)
 

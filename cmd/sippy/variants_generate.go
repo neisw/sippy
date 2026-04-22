@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"cloud.google.com/go/bigquery"
+	"github.com/openshift/sippy/pkg/api"
 	bqcachedclient "github.com/openshift/sippy/pkg/bigquery"
 	"github.com/pkg/errors"
 	log "github.com/sirupsen/logrus"
@@ -99,6 +100,20 @@ func NewVariantsGenerateCommand() *cobra.Command {
 			case "ocp":
 
 				opCtx, ctx := bqcachedclient.OpCtxForCronEnv(ctx, "variants generate")
+
+				bqClient, err := f.BigQueryFlags.GetBigQueryClient(ctx, opCtx, nil, f.GoogleCloudFlags.ServiceAccountCredentialFile)
+				if err != nil {
+					return errors.Wrap(err, "error getting BigQuery client for releases")
+				}
+				releaseConfigs, err := api.GetReleasesFromBigQuery(ctx, bqClient)
+				if err != nil {
+					return errors.Wrap(err, "error loading releases from BigQuery")
+				}
+				syntheticReleaseJobOverrides, err := variantregistry.BuildSyntheticReleaseJobOverrides(config.Releases, releaseConfigs)
+				if err != nil {
+					return errors.Wrap(err, "error building synthetic release job overrides")
+				}
+
 				jvs := variantregistry.NewOCPVariantLoader(
 					bigQueryClient, opCtx,
 					f.BigQueryFlags.BigQueryProject,
@@ -106,7 +121,8 @@ func NewVariantsGenerateCommand() *cobra.Command {
 					f.BigqueryJobsTable,
 					gcsClient,
 					config,
-					views.ComponentReadiness)
+					views.ComponentReadiness,
+					syntheticReleaseJobOverrides)
 				expectedVariants, err := jvs.LoadExpectedJobVariants(ctx)
 				if err != nil {
 					return err

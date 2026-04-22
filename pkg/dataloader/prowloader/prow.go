@@ -55,30 +55,31 @@ import (
 var gcsPathStrip = regexp.MustCompile(`.*/gs/[^/]+/`)
 
 type ProwLoader struct {
-	ctx                     context.Context
-	dbc                     *db.DB
-	errors                  []error
-	githubClient            *github.Client
-	bigQueryClient          *bqcachedclient.Client
-	maxConcurrency          int
-	prowJobCache            map[string]*models.ProwJob
-	prowJobCacheLock        sync.RWMutex
-	prowJobRunCache         map[uint]bool
-	prowJobRunCacheLock     sync.RWMutex
-	prowJobRunTestCache     map[string]uint
-	prowJobRunTestCacheLock sync.RWMutex
-	variantManager          testidentification.VariantManager
-	suiteCache              map[string]*uint
-	suiteCacheLock          sync.RWMutex
-	syntheticTestManager    synthetictests.SyntheticTestManager
-	releases                []string
-	config                  *v1config.SippyConfig
-	ghCommenter             *commenter.GitHubCommenter
-	jobsImportedCount       atomic.Int32
-	jobsProcessedCount      atomic.Int32
-	gcsClient               *storage.Client
-	promPusher              *push.Pusher
-	loadSince               *time.Time
+	ctx                          context.Context
+	dbc                          *db.DB
+	errors                       []error
+	githubClient                 *github.Client
+	bigQueryClient               *bqcachedclient.Client
+	maxConcurrency               int
+	prowJobCache                 map[string]*models.ProwJob
+	prowJobCacheLock             sync.RWMutex
+	prowJobRunCache              map[uint]bool
+	prowJobRunCacheLock          sync.RWMutex
+	prowJobRunTestCache          map[string]uint
+	prowJobRunTestCacheLock      sync.RWMutex
+	variantManager               testidentification.VariantManager
+	suiteCache                   map[string]*uint
+	suiteCacheLock               sync.RWMutex
+	syntheticTestManager         synthetictests.SyntheticTestManager
+	syntheticReleaseJobOverrides map[string]string
+	releases                     []string
+	config                       *v1config.SippyConfig
+	ghCommenter                  *commenter.GitHubCommenter
+	jobsImportedCount            atomic.Int32
+	jobsProcessedCount           atomic.Int32
+	gcsClient                    *storage.Client
+	promPusher                   *push.Pusher
+	loadSince                    *time.Time
 }
 
 func New(
@@ -93,26 +94,28 @@ func New(
 	config *v1config.SippyConfig,
 	ghCommenter *commenter.GitHubCommenter,
 	promPusher *push.Pusher,
-	loadSince *time.Time) *ProwLoader {
+	loadSince *time.Time,
+	syntheticReleaseJobOverrides map[string]string) *ProwLoader {
 
 	return &ProwLoader{
-		ctx:                  ctx,
-		dbc:                  dbc,
-		gcsClient:            gcsClient,
-		githubClient:         githubClient,
-		bigQueryClient:       bigQueryClient,
-		maxConcurrency:       10,
-		prowJobRunCache:      loadProwJobRunCache(dbc),
-		prowJobCache:         loadProwJobCache(dbc),
-		prowJobRunTestCache:  make(map[string]uint),
-		suiteCache:           make(map[string]*uint),
-		syntheticTestManager: syntheticTestManager,
-		variantManager:       variantManager,
-		releases:             releases,
-		config:               config,
-		ghCommenter:          ghCommenter,
-		promPusher:           promPusher,
-		loadSince:            loadSince,
+		ctx:                          ctx,
+		dbc:                          dbc,
+		gcsClient:                    gcsClient,
+		githubClient:                 githubClient,
+		bigQueryClient:               bigQueryClient,
+		maxConcurrency:               10,
+		prowJobRunCache:              loadProwJobRunCache(dbc),
+		prowJobCache:                 loadProwJobCache(dbc),
+		prowJobRunTestCache:          make(map[string]uint),
+		suiteCache:                   make(map[string]*uint),
+		syntheticTestManager:         syntheticTestManager,
+		syntheticReleaseJobOverrides: syntheticReleaseJobOverrides,
+		variantManager:               variantManager,
+		releases:                     releases,
+		config:                       config,
+		ghCommenter:                  ghCommenter,
+		promPusher:                   promPusher,
+		loadSince:                    loadSince,
 	}
 }
 
@@ -535,6 +538,16 @@ func (pl *ProwLoader) processProwJob(ctx context.Context, pj *prow.ProwJob) erro
 		"job":     pj.Spec.Job,
 		"buildID": pj.Status.BuildID,
 	})
+
+	// Synthetic release claims take priority over all other matching.
+	if release, ok := pl.syntheticReleaseJobOverrides[pj.Spec.Job]; ok {
+		if err := pl.prowJobToJobRun(ctx, pj, release); err != nil {
+			err = errors.Wrapf(err, "error converting prow job to job run: %s", pj.Spec.Job)
+			pjLog.WithError(err).Warning("prow import error")
+			return err
+		}
+		return nil
+	}
 
 	for _, release := range pl.releases {
 		cfg, ok := pl.config.Releases[release]
