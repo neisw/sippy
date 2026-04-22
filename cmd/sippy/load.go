@@ -144,10 +144,13 @@ func NewLoadCommand() *cobra.Command {
 				}
 			}
 
+			// likewise get a cache client if possible, though some things operate without it.
 			cacheClient, cacheErr := f.CacheFlags.GetCacheClient()
 			if cacheErr != nil {
 				log.WithError(cacheErr).Info("cache client not available, proceeding without caching")
+				cacheClient = nil // error hygiene, since we pass this down to quite a few functions
 			}
+
 			releaseConfigs := []sippyv1.Release{}
 
 			// initializing a bigquery client different from the normal one
@@ -194,6 +197,12 @@ func NewLoadCommand() *cobra.Command {
 					}
 					if dbErr != nil {
 						return errors.Wrap(dbErr, "CRITICAL error getting postgres client which prevents regression-cache loading")
+					}
+					if cacheErr != nil {
+						return errors.Wrap(cacheErr, "couldn't get cache client")
+					}
+					if f.CacheFlags.RedisURL == "" {
+						return fmt.Errorf("--redis-url is required")
 					}
 
 					views, err := f.ComponentReadinessFlags.ParseViewsFile()
@@ -321,9 +330,8 @@ func NewLoadCommand() *cobra.Command {
 			elapsed := time.Since(start)
 			log.WithField("elapsed", elapsed).Info("database load complete")
 
-			pinnedTime := f.DBFlags.GetPinnedTime()
 			if refreshMatviews && !f.SkipMatviewRefresh {
-				sippyserver.RefreshData(dbc, pinnedTime, false)
+				sippyserver.RefreshData(dbc, cacheClient, false)
 			}
 
 			elapsed = time.Since(start)
