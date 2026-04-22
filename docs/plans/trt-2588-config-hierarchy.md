@@ -99,21 +99,21 @@ and has no explicit `Jobs` entries that need override protection.
 ### Pre-Computed Synthetic Release Job Overrides Map
 
 ```go
-// Standalone function in pkg/apis/config/v1/types.go
+// Standalone function in pkg/variantregistry/synthetic.go
 func BuildSyntheticReleaseJobOverrides(
-    releases map[string]ReleaseConfig,
-    syntheticReleaseNames []string,
+    releases map[string]v1.ReleaseConfig,
+    releaseConfigs []sippyv1.Release,
 ) (map[string]string, error) {
-    syntheticSet := make(map[string]bool, len(syntheticReleaseNames))
-    for _, name := range syntheticReleaseNames {
-        syntheticSet[name] = true
-    }
+    syntheticSet := syntheticReleaseNames(releaseConfigs)
     overrides := map[string]string{}
     for releaseName, releaseCfg := range releases {
-        if !syntheticSet[releaseName] {
+        if !syntheticSet.Has(releaseName) {
             continue
         }
-        for jobName := range releaseCfg.Jobs {
+        for jobName, enabled := range releaseCfg.Jobs {
+            if !enabled {
+                continue
+            }
             if existing, conflict := overrides[jobName]; conflict {
                 return nil, fmt.Errorf(
                     "job %q is claimed by synthetic releases %q and %q",
@@ -183,7 +183,7 @@ the overrides map.
 - `pkg/apis/sippy/v1/types.go` — Add `Synthetic bool` field to `ReleaseRow`
   (BigQuery schema) and `Release` (cached type)
 - `pkg/api/releases.go` — Copy `Synthetic` in `transformRelease`
-- `pkg/apis/config/v1/types.go` — Add `BuildSyntheticReleaseJobOverrides`
+- `pkg/variantregistry/synthetic.go` — Add `BuildSyntheticReleaseJobOverrides`
   standalone function
 
 ### Phase 2: Fix `processProwJob` (Prow Loader)
@@ -351,7 +351,7 @@ should be added to the `Jobs` map explicitly.
 
 ### Unit Tests: Override Map Construction
 
-**File:** `pkg/apis/config/v1/types_test.go`
+**File:** `pkg/variantregistry/synthetic_test.go`
 
 | Test Case | Input | Expected |
 |-----------|-------|----------|

@@ -22,7 +22,10 @@ func BuildSyntheticReleaseJobOverrides(releases map[string]v1.ReleaseConfig, rel
 		if !syntheticSet.Has(releaseName) {
 			continue
 		}
-		for jobName := range releaseCfg.Jobs {
+		for jobName, enabled := range releaseCfg.Jobs {
+			if !enabled {
+				continue
+			}
 			if existing, conflict := overrides[jobName]; conflict {
 				return nil, fmt.Errorf(
 					"job %q is claimed by synthetic releases %q and %q",

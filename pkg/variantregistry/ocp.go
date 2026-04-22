@@ -678,6 +678,7 @@ func setNetworkStack(_ logrus.FieldLogger, variants map[string]string, jobName s
 }
 
 func (v *OCPVariantLoader) setRelease(logger logrus.FieldLogger, variants map[string]string, jobName string) {
+	// Presubmits on main branch are set as "Presubmits"
 	if presubmitRegex.MatchString(jobName) {
 		variants[VariantRelease] = "Presubmits"
 		return
@@ -704,6 +705,7 @@ func (v *OCPVariantLoader) setRelease(logger logrus.FieldLogger, variants map[st
 		variants[VariantFromReleaseMinor] = strconv.Itoa(fromRelease.Segments()[1])
 	}
 
+	// for jobs that look like upgrades, determine upgrade variant
 	if upgradeRegex.MatchString(jobName) {
 		switch {
 		case upgradeOutOfChangeRegex.MatchString(jobName):
@@ -715,6 +717,7 @@ func (v *OCPVariantLoader) setRelease(logger logrus.FieldLogger, variants map[st
 		}
 	} else {
 		variants[VariantUpgrade] = VariantNoValue
+		// Wipe out the FromRelease if it's not an upgrade job.
 		delete(variants, VariantFromRelease)
 		delete(variants, VariantFromReleaseMajor)
 		delete(variants, VariantFromReleaseMinor)

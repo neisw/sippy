@@ -47,6 +47,21 @@ or with a command like this if you are using the custom format file (you can ign
 pg_restore -h localhost -U postgres -p 5432 --verbose -Fc -d postgres ./sippy-backup-2022-10-20.dump
 ```
 
+### Updating the Variant Snapshot
+
+When variant logic changes, or when the auto-generated `config/openshift.yaml`
+adds new jobs, the variant snapshot needs to be regenerated. This requires
+BigQuery credentials because the snapshot queries the `Releases` table to
+determine which releases are synthetic (e.g., `rosa-stage`, `aro-integration`).
+
+```bash
+GOOGLE_APPLICATION_CREDENTIALS=~/path/to/service-account-key.json make update-variants
+```
+
+Review the diff to `pkg/variantregistry/snapshot.yaml` and commit the result.
+If the `TestVariantsSnapshot` test fails, it means the snapshot is out of date
+and needs to be regenerated with this command.
+
 ### From Prow and GCS buckets
 
 In order to access the GCS storage buckets where the raw junit data is stored, you need to provide Sippy with a google

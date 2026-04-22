@@ -119,6 +119,18 @@ func TestBuildSyntheticReleaseJobOverrides(t *testing.T) {
 			},
 		},
 		{
+			name: "disabled jobs in synthetic release are excluded",
+			releases: map[string]v1.ReleaseConfig{
+				"rosa-stage": {
+					Jobs: map[string]bool{"job-a": true, "job-b": false},
+				},
+			},
+			releaseConfigs: []sippyv1.Release{{Release: "rosa-stage", Synthetic: true}},
+			expectedOverrides: map[string]string{
+				"job-a": "rosa-stage",
+			},
+		},
+		{
 			name: "release in releaseConfigs but not in config is ignored",
 			releases: map[string]v1.ReleaseConfig{
 				"4.22": {
