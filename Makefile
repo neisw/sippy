@@ -69,5 +69,6 @@ images:
 # the Synthetic column on the Releases table). Set GOOGLE_APPLICATION_CREDENTIALS
 # to a service account key file, e.g.:
 #   GOOGLE_APPLICATION_CREDENTIALS=path/to/key.json make update-variants
+BIGQUERY_PROJECT ?= openshift-ci-data-analysis
 update-variants: sippy
-	./sippy variants snapshot --config ./config/openshift.yaml --views ./config/views.yaml
+	./sippy variants snapshot --config ./config/openshift.yaml --views ./config/views.yaml --bigquery-project $(BIGQUERY_PROJECT)
