@@ -148,12 +148,14 @@ func (l *RegressionCacheLoader) Load() {
 			anyErrors = true
 			continue
 		}
-		if err := l.closeRolledOffRegressions(release, result.activeIDs); err != nil {
+		closedIDs, err := l.closeRolledOffRegressions(release, result.activeIDs)
+		if err != nil {
 			l.errs = append(l.errs, err)
 			anyErrors = true
 			continue
 		}
-		if err := l.regressionStore.DeactivateRolledOffViews(result.activeIDs.UnsortedList(), result.activeViewMap); err != nil {
+		allIDs := append(result.activeIDs.UnsortedList(), closedIDs...)
+		if err := l.regressionStore.DeactivateRolledOffViews(allIDs, result.activeViewMap); err != nil {
 			l.logger.WithError(err).Errorf("error deactivating rolled-off regression views for release %s", release)
 			l.errs = append(l.errs, err)
 			anyErrors = true
@@ -416,15 +418,15 @@ func (l *RegressionCacheLoader) syncJobRunsFromReports(
 	return nil
 }
 
-func (l *RegressionCacheLoader) closeRolledOffRegressions(release string, activeIDs sets.Set[uint]) error {
+func (l *RegressionCacheLoader) closeRolledOffRegressions(release string, activeIDs sets.Set[uint]) ([]uint, error) {
 	rLog := l.logger.WithField("release", release)
 
 	regressions, err := l.regressionStore.ListCurrentRegressionsForRelease(release)
 	if err != nil {
-		return fmt.Errorf("error listing regressions for release %s: %w", release, err)
+		return nil, fmt.Errorf("error listing regressions for release %s: %w", release, err)
 	}
 
-	closedCount := 0
+	var closedIDs []uint
 	now := time.Now()
 	rLog.Infof("checking %d regressions against %d active IDs for closing", len(regressions), activeIDs.Len())
 	for _, reg := range regressions {
@@ -435,12 +437,12 @@ func (l *RegressionCacheLoader) closeRolledOffRegressions(release string, active
 		reg.Closed.Valid = true
 		reg.Closed.Time = now
 		if err := l.regressionStore.UpdateRegression(reg); err != nil {
-			return fmt.Errorf("error closing regression %d: %w", reg.ID, err)
+			return nil, fmt.Errorf("error closing regression %d: %w", reg.ID, err)
 		}
-		closedCount++
+		closedIDs = append(closedIDs, reg.ID)
 	}
-	rLog.Infof("closed %d regressions", closedCount)
-	return nil
+	rLog.Infof("closed %d regressions", len(closedIDs))
+	return closedIDs, nil
 }
 
 func (l *RegressionCacheLoader) buildGenerator(

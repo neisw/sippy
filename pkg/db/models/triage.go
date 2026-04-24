@@ -240,9 +240,11 @@ type TestRegression struct {
 // RegressionView associates a regression with a component readiness view.
 // The Active flag tracks whether the regression currently appears in the view's component report.
 type RegressionView struct {
-	TestRegressionID uint   `json:"test_regression_id" gorm:"primaryKey"`
-	ViewName         string `json:"view_name" gorm:"primaryKey"`
-	Active           bool   `json:"active" gorm:"not null;default:true"`
+	TestRegressionID uint         `json:"test_regression_id" gorm:"primaryKey"`
+	ViewName         string       `json:"view_name" gorm:"primaryKey"`
+	Active           bool         `json:"active" gorm:"not null;default:true"`
+	OpenedAt         time.Time    `json:"opened_at" gorm:"not null;default:now()"`
+	ClosedAt         sql.NullTime `json:"closed_at"`
 }
 
 // RegressionJobRun represents a single job run observed during the lifetime of a regression.

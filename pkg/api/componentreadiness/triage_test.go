@@ -916,6 +916,11 @@ func TestGetViewsForTriage(t *testing.T) {
 			},
 			expectedViews: []string{},
 		},
+		{
+			name:          "nil triage returns nil",
+			triage:        nil,
+			expectedViews: nil,
+		},
 	}
 
 	for _, tt := range tests {

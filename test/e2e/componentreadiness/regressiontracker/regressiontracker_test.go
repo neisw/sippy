@@ -23,7 +23,10 @@ import (
 
 func cleanupAllRegressions(dbc *db.DB) {
 	// Delete regression views first to avoid FK constraint violations
-	dbc.DB.Where("1 = 1").Delete(&models.RegressionView{})
+	resView := dbc.DB.Where("1 = 1").Delete(&models.RegressionView{})
+	if resView.Error != nil {
+		log.Errorf("error deleting regression views: %v", resView.Error)
+	}
 	res := dbc.DB.Where("1 = 1").Delete(&models.TestRegression{})
 	if res.Error != nil {
 		log.Errorf("error deleting test regressions: %v", res.Error)
@@ -472,6 +475,7 @@ func Test_RegressionViews(t *testing.T) {
 		defer cleanupAllRegressions(dbc)
 		defer cleanupRegressionViews(dbc)
 
+		beforeCreate := time.Now()
 		reg, err := tracker.OpenRegression(view, newRegSummary("upsert-create"))
 		require.NoError(t, err)
 
@@ -482,6 +486,9 @@ func Test_RegressionViews(t *testing.T) {
 		res := dbc.DB.Where("test_regression_id = ? AND view_name = ?", reg.ID, "4.19-main").First(&rv)
 		require.NoError(t, res.Error)
 		assert.True(t, rv.Active, "newly upserted view should be active")
+		assert.False(t, rv.OpenedAt.IsZero(), "opened_at should be set")
+		assert.True(t, rv.OpenedAt.After(beforeCreate) || rv.OpenedAt.Equal(beforeCreate), "opened_at should be >= test start time")
+		assert.False(t, rv.ClosedAt.Valid, "closed_at should be null for a new view")
 	})
 
 	t.Run("upsert reactivates an inactive view", func(t *testing.T) {
@@ -563,6 +570,8 @@ func Test_RegressionViews(t *testing.T) {
 		err = tracker.UpsertRegressionView(reg.ID, "4.19-ppc64le")
 		require.NoError(t, err)
 
+		beforeDeactivate := time.Now()
+
 		// Only 4.19-main is still active
 		activeViewMap := map[uint][]string{
 			reg.ID: {"4.19-main"},
@@ -574,13 +583,17 @@ func Test_RegressionViews(t *testing.T) {
 		dbc.DB.Where("test_regression_id = ?", reg.ID).Order("view_name").Find(&views)
 		require.Len(t, views, 3, "all three view rows should still exist")
 
-		viewMap := map[string]bool{}
 		for _, v := range views {
-			viewMap[v.ViewName] = v.Active
+			if v.ViewName == "4.19-main" {
+				assert.True(t, v.Active, "4.19-main should remain active")
+				assert.False(t, v.ClosedAt.Valid, "4.19-main closed_at should remain null")
+			} else {
+				assert.False(t, v.Active, "%s should be deactivated", v.ViewName)
+				assert.True(t, v.ClosedAt.Valid, "%s closed_at should be set", v.ViewName)
+				assert.True(t, v.ClosedAt.Time.After(beforeDeactivate) || v.ClosedAt.Time.Equal(beforeDeactivate),
+					"%s closed_at should be >= deactivation time", v.ViewName)
+			}
 		}
-		assert.True(t, viewMap["4.19-main"], "4.19-main should remain active")
-		assert.False(t, viewMap["4.19-arm64"], "4.19-arm64 should be deactivated")
-		assert.False(t, viewMap["4.19-ppc64le"], "4.19-ppc64le should be deactivated")
 	})
 
 	t.Run("deactivate with empty active views deactivates all", func(t *testing.T) {
@@ -651,6 +664,10 @@ func Test_RegressionViews(t *testing.T) {
 		err = tracker.UpsertRegressionView(reg.ID, "4.19-arm64")
 		require.NoError(t, err)
 
+		var rv models.RegressionView
+		dbc.DB.Where("test_regression_id = ? AND view_name = ?", reg.ID, "4.19-arm64").First(&rv)
+		originalOpenedAt := rv.OpenedAt
+
 		// Cycle 2: regression rolls off 4.19-arm64
 		activeViewMap := map[uint][]string{
 			reg.ID: {"4.19-main"},
@@ -658,9 +675,9 @@ func Test_RegressionViews(t *testing.T) {
 		err = tracker.DeactivateRolledOffViews([]uint{reg.ID}, activeViewMap)
 		require.NoError(t, err)
 
-		var rv models.RegressionView
 		dbc.DB.Where("test_regression_id = ? AND view_name = ?", reg.ID, "4.19-arm64").First(&rv)
 		assert.False(t, rv.Active, "arm64 should be inactive after deactivation")
+		assert.True(t, rv.ClosedAt.Valid, "arm64 closed_at should be set after deactivation")
 
 		// Cycle 3: regression reappears in 4.19-arm64
 		err = tracker.UpsertRegressionView(reg.ID, "4.19-arm64")
@@ -668,6 +685,9 @@ func Test_RegressionViews(t *testing.T) {
 
 		dbc.DB.Where("test_regression_id = ? AND view_name = ?", reg.ID, "4.19-arm64").First(&rv)
 		assert.True(t, rv.Active, "arm64 should be reactivated after upsert")
+		assert.False(t, rv.ClosedAt.Valid, "arm64 closed_at should be cleared after re-upsert")
+		assert.True(t, rv.OpenedAt.After(originalOpenedAt),
+			"opened_at should be updated when regression reappears on a view")
 	})
 
 	t.Run("regression views cascade delete with regression", func(t *testing.T) {

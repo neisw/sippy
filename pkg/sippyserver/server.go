@@ -61,7 +61,6 @@ import (
 	"github.com/openshift/sippy/pkg/testidentification"
 	"github.com/openshift/sippy/pkg/util"
 	"github.com/openshift/sippy/pkg/util/param"
-	"k8s.io/apimachinery/pkg/util/sets"
 )
 
 // Mode defines the server mode of operation, OpenShift or upstream Kubernetes.
@@ -987,35 +986,21 @@ func (s *Server) jsonComponentReadinessViews(w http.ResponseWriter, req *http.Re
 }
 
 func (s *Server) getRegressedTestsForRegressions(req *http.Request, regressions []models.TestRegression) ([]componentreport.ReportTestSummary, error) {
-	// Collect active view names from the regressions' preloaded Views
-	viewNames := sets.New[string]()
-	for _, reg := range regressions {
-		for _, rv := range reg.Views {
-			if rv.Active {
-				viewNames.Insert(rv.ViewName)
-			}
-		}
+	viewName := req.URL.Query().Get("view")
+	if viewName == "" {
+		return nil, fmt.Errorf("view parameter is required")
+	}
+
+	report, err := s.getComponentReportFromRequest(req)
+	if err != nil {
+		return nil, fmt.Errorf("error getting component report for view %s: %v", viewName, err)
 	}
 
 	var result []componentreport.ReportTestSummary
-	for viewName := range viewNames {
-		reqWithView := req.Clone(req.Context())
-		urlCopy := *req.URL
-		reqWithView.URL = &urlCopy
-		q := reqWithView.URL.Query()
-		q.Del("baseRelease")
-		q.Del("sampleRelease")
-		q.Set("view", viewName)
-		reqWithView.URL.RawQuery = q.Encode()
-		report, err := s.getComponentReportFromRequest(reqWithView)
-		if err != nil {
-			return nil, fmt.Errorf("error getting component report for view %s: %v", viewName, err)
-		}
-		for _, regression := range regressions {
-			regressedTest := componentreadiness.GetMatchingRegressedTestForRegression(regression, report)
-			if regressedTest != nil {
-				result = append(result, *regressedTest)
-			}
+	for _, regression := range regressions {
+		regressedTest := componentreadiness.GetMatchingRegressedTestForRegression(regression, report)
+		if regressedTest != nil {
+			result = append(result, *regressedTest)
 		}
 	}
 	return result, nil

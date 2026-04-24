@@ -23,13 +23,16 @@ export default function RegressionRedirect() {
         return response.json()
       })
       .then((regression) => {
-        const mainViewKey = regression?.links
-          ? Object.keys(regression.links).find(
-              (k) => k.startsWith('test_details:') && k.endsWith('-main')
-            )
-          : null
+        const detailKeys = regression?.links
+          ? Object.keys(regression.links)
+              .filter((k) => k.startsWith('test_details:'))
+              .sort()
+          : []
+        const mainViewKey = detailKeys.find((k) => k.endsWith('-main'))
         const testDetailsUrl = mainViewKey
           ? regression.links[mainViewKey]
+          : detailKeys.length > 0
+          ? regression.links[detailKeys[0]]
           : getTestDetailsLink(regression?.links)
         if (!testDetailsUrl) {
           setError('No test details link available for this regression.')

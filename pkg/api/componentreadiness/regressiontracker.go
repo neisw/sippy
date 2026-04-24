@@ -119,14 +119,14 @@ func (prs *PostgresRegressionStore) MergeJobRuns(regressionID uint, jobRuns []mo
 }
 
 func (prs *PostgresRegressionStore) UpsertRegressionView(regressionID uint, viewName string) error {
-	rv := models.RegressionView{
-		TestRegressionID: regressionID,
-		ViewName:         viewName,
-		Active:           true,
-	}
 	res := prs.dbc.DB.Exec(
-		"INSERT INTO regression_views (test_regression_id, view_name, active) VALUES (?, ?, true) ON CONFLICT (test_regression_id, view_name) DO UPDATE SET active = true",
-		rv.TestRegressionID, rv.ViewName)
+		`INSERT INTO regression_views (test_regression_id, view_name, active, opened_at)
+		 VALUES (?, ?, true, NOW())
+		 ON CONFLICT (test_regression_id, view_name) DO UPDATE
+		 SET active = true,
+		     opened_at = CASE WHEN regression_views.active = false THEN NOW() ELSE regression_views.opened_at END,
+		     closed_at = NULL`,
+		regressionID, viewName)
 	return res.Error
 }
 
@@ -141,7 +141,7 @@ func (prs *PostgresRegressionStore) DeactivateRolledOffViews(regressionIDs []uin
 		if activeViews := activeViewMap[regID]; len(activeViews) > 0 {
 			q = q.Where("view_name NOT IN ?", activeViews)
 		}
-		if res := q.Update("active", false); res.Error != nil {
+		if res := q.Updates(map[string]interface{}{"active": false, "closed_at": time.Now()}); res.Error != nil {
 			return fmt.Errorf("error deactivating rolled-off views for regression %d: %w", regID, res.Error)
 		}
 	}

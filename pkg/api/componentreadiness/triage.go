@@ -427,10 +427,7 @@ func calculateJobRunOverlap(candidateRunIDs sets.Set[string], triageRegression m
 	}
 
 	// Use the smaller set as the denominator so overlap is relative to the regression with fewer runs
-	denominator := candidateRunIDs.Len()
-	if len(triageRegression.JobRuns) < denominator {
-		denominator = len(triageRegression.JobRuns)
-	}
+	denominator := min(candidateRunIDs.Len(), len(triageRegression.JobRuns))
 	overlapPercent := float64(len(sharedIDs)) / float64(denominator) * 100
 
 	return &JobRunOverlap{
@@ -865,6 +862,9 @@ func generateTestDetailsURLFromRegression(regression *models.TestRegression, vie
 
 // GetViewsForTriage returns the names of all active views associated with the triage's regressions.
 func GetViewsForTriage(triage *models.Triage) []string {
+	if triage == nil {
+		return nil
+	}
 	matchingViews := make(sets.Set[string])
 	for _, regression := range triage.Regressions {
 		for _, rv := range regression.Views {

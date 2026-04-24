@@ -79,7 +79,7 @@ Lookup order:
 | File | Object type | Strategy |
 |------|------------|----------|
 | `RegressionRedirect.js` | Regression | Prefers `-main` view key, falls back to `getTestDetailsLink` |
-| `ComponentReadinessIndicator.js` | Regression | Uses `getTestDetailsLink(links, `${release}-main`)` |
+| `ComponentReadinessIndicator.js` | Regression | Uses <code>getTestDetailsLink(links, \`${release}-main\`)</code> |
 | `Triage.js` | Regressed test (chat context) | Uses `getTestDetailsLink(rt.links, view)` |
 | `TriagedRegressionTestList.js` | Regressed test (per-view columns) | Passes `viewName` from column loop to `generateTestDetailsReportLink` |
 

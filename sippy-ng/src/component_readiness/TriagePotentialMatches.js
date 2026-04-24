@@ -128,8 +128,10 @@ export default function TriagePotentialMatches({
     })
     setAvailableViews(views)
 
-    if (!selectedView || !views.includes(selectedView)) {
-      if (views.length > 0) setSelectedView(views[0])
+    if (views.length === 0) {
+      setSelectedView('')
+    } else if (!selectedView || !views.includes(selectedView)) {
+      setSelectedView(views[0])
     }
   }, [triage.regressions, selectedView])
 
@@ -352,14 +354,15 @@ export default function TriagePotentialMatches({
       flex: 4,
       valueGetter: (params) => {
         const regressedTest = params.row.regressed_test
-        const viewToUse = view
+        const viewToUse = selectedView || view
         const filterVals = `?view=${viewToUse}`
         //TODO(sgoeddel): we should be able to get this link off of the regression,
         // and stop needing to get the regressedTest off the report at all
         const testDetailsUrl = generateTestDetailsReportLink(
           regressedTest,
           filterVals,
-          expandEnvironment
+          expandEnvironment,
+          viewToUse
         )
 
         return {
