@@ -37,6 +37,10 @@ type RegressionStore interface {
 	ResolveTriages() error
 	// MergeJobRuns upserts job runs for a regression, adding new ones and skipping duplicates.
 	MergeJobRuns(regressionID uint, jobRuns []models.RegressionJobRun) error
+	// UpsertRegressionView records that a regression was observed in a view, setting active=true.
+	UpsertRegressionView(regressionID uint, viewName string) error
+	// DeactivateRolledOffViews sets active=false on regression_views rows for regressions that have rolled off a view.
+	DeactivateRolledOffViews(regressionIDs []uint, activeViewMap map[uint][]string) error
 }
 
 type PostgresRegressionStore struct {
@@ -79,6 +83,7 @@ func (prs *PostgresRegressionStore) OpenRegression(view crview.View, newRegresse
 		newRegression.BaseRelease = newRegressedTest.BaseStats.Release
 	}
 
+	newRegression.CrossCompare = len(view.VariantOptions.VariantCrossCompare) > 0
 	newRegression.Capability = newRegressedTest.Capability
 	newRegression.Component = newRegressedTest.Component
 
@@ -108,6 +113,36 @@ func (prs *PostgresRegressionStore) MergeJobRuns(regressionID uint, jobRuns []mo
 		if res.Error != nil {
 			return fmt.Errorf("error merging job run %s for regression %d: %w",
 				jobRuns[i].ProwJobRunID, regressionID, res.Error)
+		}
+	}
+	return nil
+}
+
+func (prs *PostgresRegressionStore) UpsertRegressionView(regressionID uint, viewName string) error {
+	rv := models.RegressionView{
+		TestRegressionID: regressionID,
+		ViewName:         viewName,
+		Active:           true,
+	}
+	res := prs.dbc.DB.Exec(
+		"INSERT INTO regression_views (test_regression_id, view_name, active) VALUES (?, ?, true) ON CONFLICT (test_regression_id, view_name) DO UPDATE SET active = true",
+		rv.TestRegressionID, rv.ViewName)
+	return res.Error
+}
+
+func (prs *PostgresRegressionStore) DeactivateRolledOffViews(regressionIDs []uint, activeViewMap map[uint][]string) error {
+	if len(regressionIDs) == 0 {
+		return nil
+	}
+
+	for _, regID := range regressionIDs {
+		q := prs.dbc.DB.Model(&models.RegressionView{}).
+			Where("test_regression_id = ? AND active = true", regID)
+		if activeViews := activeViewMap[regID]; len(activeViews) > 0 {
+			q = q.Where("view_name NOT IN ?", activeViews)
+		}
+		if res := q.Update("active", false); res.Error != nil {
+			return fmt.Errorf("error deactivating rolled-off views for regression %d: %w", regID, res.Error)
 		}
 	}
 	return nil
@@ -196,7 +231,8 @@ func SyncRegressionsForReport(
 	var activeRegressions []*models.TestRegression // all the matches we found, and new regressions opened, used to determine what had no match
 	rLog.Infof("syncing %d open regressions", len(allRegressedTests))
 	for _, regTest := range allRegressedTests {
-		if openReg := regressiontracker.FindOpenRegression(view.SampleRelease.Name, regTest.TestID, regTest.Variants, regressions); openReg != nil {
+		crossCompare := len(view.VariantOptions.VariantCrossCompare) > 0
+		if openReg := regressiontracker.FindOpenRegression(view.SampleRelease.Name, regTest.TestID, crossCompare, regTest.Variants, regressions); openReg != nil {
 
 			// Check if we need to add new variants to the regression found via subset matching.
 			// This allows regressions to be split by new variant dimensions when db_column_groupby is modified.

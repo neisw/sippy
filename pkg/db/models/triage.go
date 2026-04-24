@@ -209,15 +209,16 @@ type TestRegression struct {
 	Release string `json:"release" gorm:"not null;index:idx_test_regression_release"`
 	// BaseRelease is the release this test was marked regressed against. It may not match the view's base release
 	// if the view uses release fallback and this test was flagged regressed against a prior release with better pass rate.
-	BaseRelease string         `json:"base_release"`
-	Component   string         `json:"component"`
-	Capability  string         `json:"capability"`
-	TestID      string         `json:"test_id" gorm:"not null"`
-	TestName    string         `json:"test_name" gorm:"not null;index:idx_test_regression_test_name"`
-	Variants    pq.StringArray `json:"variants" gorm:"not null;type:text[]"`
-	Opened      time.Time      `json:"opened" gorm:"not null"`
-	Closed      sql.NullTime   `json:"closed"`
-	Triages     []Triage       `json:"triages" gorm:"many2many:triage_regressions;"`
+	BaseRelease  string         `json:"base_release"`
+	Component    string         `json:"component"`
+	Capability   string         `json:"capability"`
+	CrossCompare bool           `json:"cross_compare" gorm:"not null;default:false"`
+	TestID       string         `json:"test_id" gorm:"not null"`
+	TestName     string         `json:"test_name" gorm:"not null;index:idx_test_regression_test_name"`
+	Variants     pq.StringArray `json:"variants" gorm:"not null;type:text[]"`
+	Opened       time.Time      `json:"opened" gorm:"not null"`
+	Closed       sql.NullTime   `json:"closed"`
+	Triages      []Triage       `json:"triages" gorm:"many2many:triage_regressions;"`
 	// LastFailure is the last failure in the sample we saw while this regression was open.
 	LastFailure sql.NullTime `json:"last_failure"`
 	// MaxFailures is the maximum number of failures we found in the reporting window while this regression was open.
@@ -229,8 +230,19 @@ type TestRegression struct {
 	// As the 7-day sample window slides, old runs roll off and new ones appear, but this list retains all of them.
 	JobRuns []RegressionJobRun `json:"job_runs,omitempty" gorm:"foreignKey:RegressionID;constraint:OnDelete:CASCADE;"`
 
+	// Views tracks which component readiness views this regression has been observed in.
+	Views []RegressionView `json:"views,omitempty" gorm:"foreignKey:TestRegressionID;constraint:OnDelete:CASCADE;"`
+
 	// Links contains HATEOAS-style links for this regression record (not stored in database)
 	Links map[string]string `json:"links,omitempty" gorm:"-"`
+}
+
+// RegressionView associates a regression with a component readiness view.
+// The Active flag tracks whether the regression currently appears in the view's component report.
+type RegressionView struct {
+	TestRegressionID uint   `json:"test_regression_id" gorm:"primaryKey"`
+	ViewName         string `json:"view_name" gorm:"primaryKey"`
+	Active           bool   `json:"active" gorm:"not null;default:true"`
 }
 
 // RegressionJobRun represents a single job run observed during the lifetime of a regression.

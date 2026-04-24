@@ -692,11 +692,25 @@ func TestFindOpenRegression(t *testing.T) {
 			wantRelease:     sampleRelease,
 			wantBaseRelease: baseRelease,
 		},
+		{
+			name: "no match when cross-compare flag differs",
+			regressions: []*models.TestRegression{
+				{
+					ID:           1,
+					Release:      sampleRelease,
+					BaseRelease:  baseRelease,
+					CrossCompare: true,
+					TestID:       testID,
+					Variants:     []string{"arch:amd64"},
+				},
+			},
+			wantMatch: false,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := FindOpenRegression(sampleRelease, testID, variants, tt.regressions)
+			got := FindOpenRegression(sampleRelease, testID, false, variants, tt.regressions)
 			if !tt.wantMatch {
 				assert.Nil(t, got, "expected no match")
 				return
@@ -707,6 +721,46 @@ func TestFindOpenRegression(t *testing.T) {
 			assert.Equal(t, testID, got.TestID)
 		})
 	}
+}
+
+func TestFindOpenRegression_CrossCompareIsolation(t *testing.T) {
+	sampleRelease := "5.0"
+	testID := "test-id-1"
+	variants := map[string]string{"arch": "amd64"}
+
+	// Both a standard and cross-compare regression exist for the same (release, testID, variants)
+	regressions := []*models.TestRegression{
+		{
+			ID:           1,
+			Release:      sampleRelease,
+			BaseRelease:  "4.22",
+			CrossCompare: false,
+			TestID:       testID,
+			Variants:     []string{"arch:amd64"},
+		},
+		{
+			ID:           2,
+			Release:      sampleRelease,
+			BaseRelease:  sampleRelease,
+			CrossCompare: true,
+			TestID:       testID,
+			Variants:     []string{"arch:amd64"},
+		},
+	}
+
+	t.Run("standard view selects standard regression", func(t *testing.T) {
+		got := FindOpenRegression(sampleRelease, testID, false, variants, regressions)
+		require.NotNil(t, got)
+		assert.Equal(t, uint(1), got.ID)
+		assert.False(t, got.CrossCompare)
+	})
+
+	t.Run("cross-compare view selects cross-compare regression", func(t *testing.T) {
+		got := FindOpenRegression(sampleRelease, testID, true, variants, regressions)
+		require.NotNil(t, got)
+		assert.Equal(t, uint(2), got.ID)
+		assert.True(t, got.CrossCompare)
+	})
 }
 
 // TestFindOpenRegression_SubsetMatching tests the subset variant matching behavior
@@ -821,7 +875,7 @@ func TestFindOpenRegression_SubsetMatching(t *testing.T) {
 				},
 			}
 
-			got := FindOpenRegression(sampleRelease, testID, tt.inputVariants, regressions)
+			got := FindOpenRegression(sampleRelease, testID, false, tt.inputVariants, regressions)
 
 			if !tt.wantMatch {
 				assert.Nil(t, got, "expected no match but got regression ID %v", got)

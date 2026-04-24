@@ -61,6 +61,7 @@ import (
 	"github.com/openshift/sippy/pkg/testidentification"
 	"github.com/openshift/sippy/pkg/util"
 	"github.com/openshift/sippy/pkg/util/param"
+	"k8s.io/apimachinery/pkg/util/sets"
 )
 
 // Mode defines the server mode of operation, OpenShift or upstream Kubernetes.
@@ -986,25 +987,29 @@ func (s *Server) jsonComponentReadinessViews(w http.ResponseWriter, req *http.Re
 }
 
 func (s *Server) getRegressedTestsForRegressions(req *http.Request, regressions []models.TestRegression) ([]componentreport.ReportTestSummary, error) {
-	baseRelease := req.URL.Query().Get("baseRelease")
-	sampleRelease := req.URL.Query().Get("sampleRelease")
-	if baseRelease == "" || sampleRelease == "" {
-		return nil, fmt.Errorf("baseRelease and sampleRelease are required")
+	// Collect active view names from the regressions' preloaded Views
+	viewNames := sets.New[string]()
+	for _, reg := range regressions {
+		for _, rv := range reg.Views {
+			if rv.Active {
+				viewNames.Insert(rv.ViewName)
+			}
+		}
 	}
-	matchingViews := componentreadiness.ViewsMatchingReleases(baseRelease, sampleRelease, s.views.ComponentReadiness)
+
 	var result []componentreport.ReportTestSummary
-	for _, view := range matchingViews {
+	for viewName := range viewNames {
 		reqWithView := req.Clone(req.Context())
 		urlCopy := *req.URL
 		reqWithView.URL = &urlCopy
 		q := reqWithView.URL.Query()
 		q.Del("baseRelease")
 		q.Del("sampleRelease")
-		q.Set("view", view.Name)
+		q.Set("view", viewName)
 		reqWithView.URL.RawQuery = q.Encode()
 		report, err := s.getComponentReportFromRequest(reqWithView)
 		if err != nil {
-			return nil, fmt.Errorf("error getting component report for view %s: %v", view.Name, err)
+			return nil, fmt.Errorf("error getting component report for view %s: %v", viewName, err)
 		}
 		for _, regression := range regressions {
 			regressedTest := componentreadiness.GetMatchingRegressedTestForRegression(regression, report)
@@ -1719,7 +1724,7 @@ func (s *Server) jsonGetTriageByID(w http.ResponseWriter, req *http.Request) {
 		RegressedTests: make(map[string][]*componentreport.ReportTestSummary),
 	}
 
-	views := componentreadiness.GetViewsForTriage(triage, s.views.ComponentReadiness)
+	views := componentreadiness.GetViewsForTriage(triage)
 	for _, view := range views {
 		// Set the view in the request so that we can obtain the component report to get the regressed test(s) for display
 		q := req.URL.Query()
@@ -1834,14 +1839,14 @@ func (s *Server) jsonTriagePotentialMatchingRegressions(w http.ResponseWriter, r
 		failureResponse(w, http.StatusNotFound, "triage not found")
 		return
 	}
-	sampleRelease := req.URL.Query().Get("sampleRelease")
-	if sampleRelease == "" {
-		failureResponse(w, http.StatusBadRequest, "no sampleRelease provided")
+	viewName := req.URL.Query().Get("view")
+	if viewName == "" {
+		failureResponse(w, http.StatusBadRequest, "no view provided")
 		return
 	}
-	baseRelease := req.URL.Query().Get("baseRelease")
-	if baseRelease == "" {
-		failureResponse(w, http.StatusBadRequest, "no baseRelease provided")
+	view, ok := componentreadiness.FindViewByName(viewName, s.views.ComponentReadiness)
+	if !ok {
+		failureResponse(w, http.StatusBadRequest, fmt.Sprintf("view not found: %s", viewName))
 		return
 	}
 	allReleases, err := s.getReleases(req.Context())
@@ -1849,7 +1854,7 @@ func (s *Server) jsonTriagePotentialMatchingRegressions(w http.ResponseWriter, r
 		failureResponse(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	regressions, err := componentreadiness.ListRegressions(s.db, sampleRelease, s.views.ComponentReadiness, allReleases, s.crTimeRoundingFactor, req)
+	regressions, err := componentreadiness.ListRegressions(s.db, view.SampleRelease.Name, s.views.ComponentReadiness, allReleases, s.crTimeRoundingFactor, req)
 	if err != nil {
 		failureResponse(w, http.StatusInternalServerError, err.Error())
 		return

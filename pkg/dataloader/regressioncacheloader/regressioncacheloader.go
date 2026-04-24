@@ -102,8 +102,9 @@ func (l *RegressionCacheLoader) Load() {
 
 	// Group views by sample release so we can handle regression closing per-release
 	releaseResults := map[string]*struct {
-		activeIDs sets.Set[uint]
-		hadErrors bool
+		activeIDs     sets.Set[uint]
+		activeViewMap map[uint][]string
+		hadErrors     bool
 	}{}
 
 	for _, view := range l.views {
@@ -115,10 +116,12 @@ func (l *RegressionCacheLoader) Load() {
 
 		if _, ok := releaseResults[release]; !ok {
 			releaseResults[release] = &struct {
-				activeIDs sets.Set[uint]
-				hadErrors bool
+				activeIDs     sets.Set[uint]
+				activeViewMap map[uint][]string
+				hadErrors     bool
 			}{
-				activeIDs: make(sets.Set[uint]),
+				activeIDs:     make(sets.Set[uint]),
+				activeViewMap: make(map[uint][]string),
 			}
 		}
 
@@ -131,6 +134,8 @@ func (l *RegressionCacheLoader) Load() {
 		}
 		for _, reg := range activeRegs {
 			releaseResults[release].activeIDs.Insert(reg.ID)
+			releaseResults[release].activeViewMap[reg.ID] = append(
+				releaseResults[release].activeViewMap[reg.ID], view.Name)
 		}
 	}
 
@@ -143,7 +148,13 @@ func (l *RegressionCacheLoader) Load() {
 			anyErrors = true
 			continue
 		}
-		if err := l.closeStaleRegressions(release, result.activeIDs); err != nil {
+		if err := l.closeRolledOffRegressions(release, result.activeIDs); err != nil {
+			l.errs = append(l.errs, err)
+			anyErrors = true
+			continue
+		}
+		if err := l.regressionStore.DeactivateRolledOffViews(result.activeIDs.UnsortedList(), result.activeViewMap); err != nil {
+			l.logger.WithError(err).Errorf("error deactivating rolled-off regression views for release %s", release)
 			l.errs = append(l.errs, err)
 			anyErrors = true
 		}
@@ -190,6 +201,12 @@ func (l *RegressionCacheLoader) processView(
 			l.regressionStore, view, rLog, report)
 		if err != nil {
 			return nil, fmt.Errorf("error syncing regressions for view %s: %w", view.Name, err)
+		}
+		for _, reg := range activeRegressions {
+			if err := l.regressionStore.UpsertRegressionView(reg.ID, view.Name); err != nil {
+				return nil, fmt.Errorf("error upserting view %s for regression %d: %w",
+					view.Name, reg.ID, err)
+			}
 		}
 	}
 
@@ -399,7 +416,7 @@ func (l *RegressionCacheLoader) syncJobRunsFromReports(
 	return nil
 }
 
-func (l *RegressionCacheLoader) closeStaleRegressions(release string, activeIDs sets.Set[uint]) error {
+func (l *RegressionCacheLoader) closeRolledOffRegressions(release string, activeIDs sets.Set[uint]) error {
 	rLog := l.logger.WithField("release", release)
 
 	regressions, err := l.regressionStore.ListCurrentRegressionsForRelease(release)

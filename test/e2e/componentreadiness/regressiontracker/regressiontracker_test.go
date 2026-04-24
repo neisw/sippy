@@ -22,7 +22,8 @@ import (
 )
 
 func cleanupAllRegressions(dbc *db.DB) {
-	// Delete all test regressions in the e2e postgres db.
+	// Delete regression views first to avoid FK constraint violations
+	dbc.DB.Where("1 = 1").Delete(&models.RegressionView{})
 	res := dbc.DB.Where("1 = 1").Delete(&models.TestRegression{})
 	if res.Error != nil {
 		log.Errorf("error deleting test regressions: %v", res.Error)
@@ -426,6 +427,429 @@ func Test_RegressionJobRuns(t *testing.T) {
 		var count int64
 		dbc.DB.Model(&models.RegressionJobRun{}).Where("regression_id = ?", reg.ID).Count(&count)
 		assert.Equal(t, int64(0), count, "job runs should be cascade deleted with regression")
+	})
+}
+
+func cleanupRegressionViews(dbc *db.DB) {
+	res := dbc.DB.Where("1 = 1").Delete(&models.RegressionView{})
+	if res.Error != nil {
+		log.Errorf("error deleting regression views: %v", res.Error)
+	}
+}
+
+func Test_RegressionViews(t *testing.T) {
+	dbc := util.CreateE2EPostgresConnection(t)
+	tracker := componentreadiness.NewPostgresRegressionStore(dbc, nil)
+	view := crview.View{
+		Name: "4.19-main",
+		SampleRelease: reqopts.RelativeRelease{
+			Release: reqopts.Release{
+				Name: "4.19",
+			},
+		},
+	}
+
+	newRegSummary := func(testID string) componentreport.ReportTestSummary {
+		return componentreport.ReportTestSummary{
+			TestComparison: testdetails.TestComparison{
+				BaseStats: &testdetails.ReleaseStats{Release: "4.18"},
+			},
+			Identification: crtest.Identification{
+				RowIdentification: crtest.RowIdentification{
+					Component:  "comp",
+					Capability: "cap",
+					TestName:   "view test " + testID,
+					TestID:     testID,
+				},
+				ColumnIdentification: crtest.ColumnIdentification{
+					Variants: map[string]string{"a": "b"},
+				},
+			},
+		}
+	}
+
+	t.Run("upsert creates a new regression view", func(t *testing.T) {
+		defer cleanupAllRegressions(dbc)
+		defer cleanupRegressionViews(dbc)
+
+		reg, err := tracker.OpenRegression(view, newRegSummary("upsert-create"))
+		require.NoError(t, err)
+
+		err = tracker.UpsertRegressionView(reg.ID, "4.19-main")
+		require.NoError(t, err)
+
+		var rv models.RegressionView
+		res := dbc.DB.Where("test_regression_id = ? AND view_name = ?", reg.ID, "4.19-main").First(&rv)
+		require.NoError(t, res.Error)
+		assert.True(t, rv.Active, "newly upserted view should be active")
+	})
+
+	t.Run("upsert reactivates an inactive view", func(t *testing.T) {
+		defer cleanupAllRegressions(dbc)
+		defer cleanupRegressionViews(dbc)
+
+		reg, err := tracker.OpenRegression(view, newRegSummary("upsert-reactivate"))
+		require.NoError(t, err)
+
+		// Create and then deactivate
+		err = tracker.UpsertRegressionView(reg.ID, "4.19-main")
+		require.NoError(t, err)
+		dbc.DB.Model(&models.RegressionView{}).
+			Where("test_regression_id = ? AND view_name = ?", reg.ID, "4.19-main").
+			Update("active", false)
+
+		// Verify it's inactive
+		var rv models.RegressionView
+		dbc.DB.Where("test_regression_id = ? AND view_name = ?", reg.ID, "4.19-main").First(&rv)
+		assert.False(t, rv.Active, "view should be inactive before re-upsert")
+
+		// Upsert again should reactivate
+		err = tracker.UpsertRegressionView(reg.ID, "4.19-main")
+		require.NoError(t, err)
+
+		dbc.DB.Where("test_regression_id = ? AND view_name = ?", reg.ID, "4.19-main").First(&rv)
+		assert.True(t, rv.Active, "view should be reactivated after upsert")
+	})
+
+	t.Run("upsert is idempotent for active views", func(t *testing.T) {
+		defer cleanupAllRegressions(dbc)
+		defer cleanupRegressionViews(dbc)
+
+		reg, err := tracker.OpenRegression(view, newRegSummary("upsert-idempotent"))
+		require.NoError(t, err)
+
+		err = tracker.UpsertRegressionView(reg.ID, "4.19-main")
+		require.NoError(t, err)
+		err = tracker.UpsertRegressionView(reg.ID, "4.19-main")
+		require.NoError(t, err)
+
+		var count int64
+		dbc.DB.Model(&models.RegressionView{}).
+			Where("test_regression_id = ? AND view_name = ?", reg.ID, "4.19-main").
+			Count(&count)
+		assert.Equal(t, int64(1), count, "should have exactly one row, not duplicates")
+	})
+
+	t.Run("multiple views for one regression", func(t *testing.T) {
+		defer cleanupAllRegressions(dbc)
+		defer cleanupRegressionViews(dbc)
+
+		reg, err := tracker.OpenRegression(view, newRegSummary("multi-view"))
+		require.NoError(t, err)
+
+		err = tracker.UpsertRegressionView(reg.ID, "4.19-main")
+		require.NoError(t, err)
+		err = tracker.UpsertRegressionView(reg.ID, "4.19-arm64")
+		require.NoError(t, err)
+
+		var views []models.RegressionView
+		res := dbc.DB.Where("test_regression_id = ?", reg.ID).Find(&views)
+		require.NoError(t, res.Error)
+		assert.Len(t, views, 2, "regression should be associated with two views")
+	})
+
+	t.Run("deactivate rolled-off views removes views not in active map", func(t *testing.T) {
+		defer cleanupAllRegressions(dbc)
+		defer cleanupRegressionViews(dbc)
+
+		reg, err := tracker.OpenRegression(view, newRegSummary("deactivate-rolled-off"))
+		require.NoError(t, err)
+
+		// Associate with three views
+		err = tracker.UpsertRegressionView(reg.ID, "4.19-main")
+		require.NoError(t, err)
+		err = tracker.UpsertRegressionView(reg.ID, "4.19-arm64")
+		require.NoError(t, err)
+		err = tracker.UpsertRegressionView(reg.ID, "4.19-ppc64le")
+		require.NoError(t, err)
+
+		// Only 4.19-main is still active
+		activeViewMap := map[uint][]string{
+			reg.ID: {"4.19-main"},
+		}
+		err = tracker.DeactivateRolledOffViews([]uint{reg.ID}, activeViewMap)
+		require.NoError(t, err)
+
+		var views []models.RegressionView
+		dbc.DB.Where("test_regression_id = ?", reg.ID).Order("view_name").Find(&views)
+		require.Len(t, views, 3, "all three view rows should still exist")
+
+		viewMap := map[string]bool{}
+		for _, v := range views {
+			viewMap[v.ViewName] = v.Active
+		}
+		assert.True(t, viewMap["4.19-main"], "4.19-main should remain active")
+		assert.False(t, viewMap["4.19-arm64"], "4.19-arm64 should be deactivated")
+		assert.False(t, viewMap["4.19-ppc64le"], "4.19-ppc64le should be deactivated")
+	})
+
+	t.Run("deactivate with empty active views deactivates all", func(t *testing.T) {
+		defer cleanupAllRegressions(dbc)
+		defer cleanupRegressionViews(dbc)
+
+		reg, err := tracker.OpenRegression(view, newRegSummary("deactivate-all"))
+		require.NoError(t, err)
+
+		err = tracker.UpsertRegressionView(reg.ID, "4.19-main")
+		require.NoError(t, err)
+		err = tracker.UpsertRegressionView(reg.ID, "4.19-arm64")
+		require.NoError(t, err)
+
+		// No active views for this regression
+		activeViewMap := map[uint][]string{}
+		err = tracker.DeactivateRolledOffViews([]uint{reg.ID}, activeViewMap)
+		require.NoError(t, err)
+
+		var activeCount int64
+		dbc.DB.Model(&models.RegressionView{}).
+			Where("test_regression_id = ? AND active = true", reg.ID).
+			Count(&activeCount)
+		assert.Equal(t, int64(0), activeCount, "all views should be deactivated")
+	})
+
+	t.Run("deactivate with empty regression IDs is a no-op", func(t *testing.T) {
+		err := tracker.DeactivateRolledOffViews([]uint{}, map[uint][]string{})
+		require.NoError(t, err)
+	})
+
+	t.Run("views are preloaded on regression queries", func(t *testing.T) {
+		defer cleanupAllRegressions(dbc)
+		defer cleanupRegressionViews(dbc)
+
+		reg, err := tracker.OpenRegression(view, newRegSummary("preload-test"))
+		require.NoError(t, err)
+
+		err = tracker.UpsertRegressionView(reg.ID, "4.19-main")
+		require.NoError(t, err)
+		err = tracker.UpsertRegressionView(reg.ID, "4.19-arm64")
+		require.NoError(t, err)
+
+		// Query the regression with Views preloaded
+		var loaded models.TestRegression
+		res := dbc.DB.Preload("Views").First(&loaded, reg.ID)
+		require.NoError(t, res.Error)
+		assert.Len(t, loaded.Views, 2, "views should be preloaded")
+
+		viewNames := make(map[string]bool)
+		for _, v := range loaded.Views {
+			viewNames[v.ViewName] = true
+		}
+		assert.True(t, viewNames["4.19-main"])
+		assert.True(t, viewNames["4.19-arm64"])
+	})
+
+	t.Run("regression view lifecycle: upsert, deactivate, re-upsert", func(t *testing.T) {
+		defer cleanupAllRegressions(dbc)
+		defer cleanupRegressionViews(dbc)
+
+		reg, err := tracker.OpenRegression(view, newRegSummary("lifecycle"))
+		require.NoError(t, err)
+
+		// Cycle 1: regression appears in both views
+		err = tracker.UpsertRegressionView(reg.ID, "4.19-main")
+		require.NoError(t, err)
+		err = tracker.UpsertRegressionView(reg.ID, "4.19-arm64")
+		require.NoError(t, err)
+
+		// Cycle 2: regression rolls off 4.19-arm64
+		activeViewMap := map[uint][]string{
+			reg.ID: {"4.19-main"},
+		}
+		err = tracker.DeactivateRolledOffViews([]uint{reg.ID}, activeViewMap)
+		require.NoError(t, err)
+
+		var rv models.RegressionView
+		dbc.DB.Where("test_regression_id = ? AND view_name = ?", reg.ID, "4.19-arm64").First(&rv)
+		assert.False(t, rv.Active, "arm64 should be inactive after deactivation")
+
+		// Cycle 3: regression reappears in 4.19-arm64
+		err = tracker.UpsertRegressionView(reg.ID, "4.19-arm64")
+		require.NoError(t, err)
+
+		dbc.DB.Where("test_regression_id = ? AND view_name = ?", reg.ID, "4.19-arm64").First(&rv)
+		assert.True(t, rv.Active, "arm64 should be reactivated after upsert")
+	})
+
+	t.Run("regression views cascade delete with regression", func(t *testing.T) {
+		defer cleanupAllRegressions(dbc)
+		defer cleanupRegressionViews(dbc)
+
+		reg, err := tracker.OpenRegression(view, newRegSummary("cascade-delete"))
+		require.NoError(t, err)
+
+		err = tracker.UpsertRegressionView(reg.ID, "4.19-main")
+		require.NoError(t, err)
+
+		// Delete the regression
+		res := dbc.DB.Delete(&models.TestRegression{}, reg.ID)
+		require.NoError(t, res.Error)
+
+		// Views should be cascade deleted
+		var count int64
+		dbc.DB.Model(&models.RegressionView{}).Where("test_regression_id = ?", reg.ID).Count(&count)
+		assert.Equal(t, int64(0), count, "regression views should be cascade deleted with regression")
+	})
+}
+
+func Test_CrossCompareIsolation(t *testing.T) {
+	dbc := util.CreateE2EPostgresConnection(t)
+	tracker := componentreadiness.NewPostgresRegressionStore(dbc, nil)
+	rLog := log.WithField("test", "cross-compare-isolation")
+
+	standardView := crview.View{
+		Name: "4.19-main",
+		SampleRelease: reqopts.RelativeRelease{
+			Release: reqopts.Release{Name: "4.19"},
+		},
+		BaseRelease: reqopts.RelativeRelease{
+			Release: reqopts.Release{Name: "4.18"},
+		},
+	}
+
+	crossCompareView := crview.View{
+		Name: "4.19-ha-vs-two-node",
+		SampleRelease: reqopts.RelativeRelease{
+			Release: reqopts.Release{Name: "4.19"},
+		},
+		BaseRelease: reqopts.RelativeRelease{
+			Release: reqopts.Release{Name: "4.19"},
+		},
+		VariantOptions: reqopts.Variants{
+			VariantCrossCompare: []string{"Topology"},
+		},
+	}
+
+	testSummary := componentreport.ReportTestSummary{
+		TestComparison: testdetails.TestComparison{
+			BaseStats:   &testdetails.ReleaseStats{Release: "4.18"},
+			SampleStats: testdetails.ReleaseStats{Stats: crtest.NewTestStats(10, 5, 0, false)},
+		},
+		Identification: crtest.Identification{
+			RowIdentification: crtest.RowIdentification{
+				Component:  "networking",
+				Capability: "connectivity",
+				TestName:   "cross compare test",
+				TestID:     "cross-compare-test-id",
+			},
+			ColumnIdentification: crtest.ColumnIdentification{
+				Variants: map[string]string{"arch": "amd64", "network": "OVNKubernetes"},
+			},
+		},
+	}
+
+	makeReport := func(tests ...componentreport.ReportTestSummary) *componentreport.ComponentReport {
+		return &componentreport.ComponentReport{
+			Rows: []componentreport.ReportRow{
+				{
+					Columns: []componentreport.ReportColumn{
+						{RegressedTests: tests},
+					},
+				},
+			},
+		}
+	}
+
+	t.Run("OpenRegression sets CrossCompare from view config", func(t *testing.T) {
+		defer cleanupAllRegressions(dbc)
+
+		stdReg, err := tracker.OpenRegression(standardView, testSummary)
+		require.NoError(t, err)
+		assert.False(t, stdReg.CrossCompare, "standard view regression should have CrossCompare=false")
+
+		ccReg, err := tracker.OpenRegression(crossCompareView, testSummary)
+		require.NoError(t, err)
+		assert.True(t, ccReg.CrossCompare, "cross-compare view regression should have CrossCompare=true")
+	})
+
+	t.Run("SyncRegressionsForReport creates isolated regressions for same test", func(t *testing.T) {
+		defer cleanupAllRegressions(dbc)
+
+		report := makeReport(testSummary)
+
+		stdRegs, err := componentreadiness.SyncRegressionsForReport(tracker, standardView, rLog, report)
+		require.NoError(t, err)
+		require.Len(t, stdRegs, 1, "should open one regression for standard view")
+		assert.False(t, stdRegs[0].CrossCompare)
+
+		ccRegs, err := componentreadiness.SyncRegressionsForReport(tracker, crossCompareView, rLog, report)
+		require.NoError(t, err)
+		require.Len(t, ccRegs, 1, "should open one regression for cross-compare view")
+		assert.True(t, ccRegs[0].CrossCompare)
+
+		assert.NotEqual(t, stdRegs[0].ID, ccRegs[0].ID,
+			"standard and cross-compare regressions should be separate records")
+
+		// Verify both exist in the database
+		var allRegs []models.TestRegression
+		res := dbc.DB.Where("release = ? AND test_id = ?", "4.19", "cross-compare-test-id").Find(&allRegs)
+		require.NoError(t, res.Error)
+		assert.Len(t, allRegs, 2, "should have two separate regression records in the database")
+	})
+
+	t.Run("standard sync does not match cross-compare regressions", func(t *testing.T) {
+		defer cleanupAllRegressions(dbc)
+
+		// Pre-create a cross-compare regression
+		ccReg, err := tracker.OpenRegression(crossCompareView, testSummary)
+		require.NoError(t, err)
+		assert.True(t, ccReg.CrossCompare)
+
+		report := makeReport(testSummary)
+
+		// Sync with standard view — should NOT match the cross-compare regression
+		stdRegs, err := componentreadiness.SyncRegressionsForReport(tracker, standardView, rLog, report)
+		require.NoError(t, err)
+		require.Len(t, stdRegs, 1)
+		assert.NotEqual(t, ccReg.ID, stdRegs[0].ID,
+			"standard sync should have opened a new regression, not matched the cross-compare one")
+		assert.False(t, stdRegs[0].CrossCompare)
+	})
+
+	t.Run("cross-compare sync does not match standard regressions", func(t *testing.T) {
+		defer cleanupAllRegressions(dbc)
+
+		// Pre-create a standard regression
+		stdReg, err := tracker.OpenRegression(standardView, testSummary)
+		require.NoError(t, err)
+		assert.False(t, stdReg.CrossCompare)
+
+		report := makeReport(testSummary)
+
+		// Sync with cross-compare view — should NOT match the standard regression
+		ccRegs, err := componentreadiness.SyncRegressionsForReport(tracker, crossCompareView, rLog, report)
+		require.NoError(t, err)
+		require.Len(t, ccRegs, 1)
+		assert.NotEqual(t, stdReg.ID, ccRegs[0].ID,
+			"cross-compare sync should have opened a new regression, not matched the standard one")
+		assert.True(t, ccRegs[0].CrossCompare)
+	})
+
+	t.Run("re-sync reuses existing regression within same pool", func(t *testing.T) {
+		defer cleanupAllRegressions(dbc)
+
+		report := makeReport(testSummary)
+
+		// First sync for standard view
+		stdRegs1, err := componentreadiness.SyncRegressionsForReport(tracker, standardView, rLog, report)
+		require.NoError(t, err)
+		require.Len(t, stdRegs1, 1)
+
+		// Second sync for standard view should reuse the same regression
+		stdRegs2, err := componentreadiness.SyncRegressionsForReport(tracker, standardView, rLog, report)
+		require.NoError(t, err)
+		require.Len(t, stdRegs2, 1)
+		assert.Equal(t, stdRegs1[0].ID, stdRegs2[0].ID, "standard re-sync should reuse existing regression")
+
+		// First sync for cross-compare view
+		ccRegs1, err := componentreadiness.SyncRegressionsForReport(tracker, crossCompareView, rLog, report)
+		require.NoError(t, err)
+		require.Len(t, ccRegs1, 1)
+
+		// Second sync for cross-compare view should reuse the same regression
+		ccRegs2, err := componentreadiness.SyncRegressionsForReport(tracker, crossCompareView, rLog, report)
+		require.NoError(t, err)
+		require.Len(t, ccRegs2, 1)
+		assert.Equal(t, ccRegs1[0].ID, ccRegs2[0].ID, "cross-compare re-sync should reuse existing regression")
 	})
 }
 

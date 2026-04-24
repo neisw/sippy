@@ -1,4 +1,4 @@
-import { getRegressionAPIUrl } from './CompReadyUtils'
+import { getRegressionAPIUrl, getTestDetailsLink } from './CompReadyUtils'
 import { useNavigate, useParams } from 'react-router-dom'
 import Alert from '@mui/material/Alert'
 import React from 'react'
@@ -23,18 +23,24 @@ export default function RegressionRedirect() {
         return response.json()
       })
       .then((regression) => {
-        if (!regression?.links?.test_details) {
+        const mainViewKey = regression?.links
+          ? Object.keys(regression.links).find(
+              (k) => k.startsWith('test_details:') && k.endsWith('-main')
+            )
+          : null
+        const testDetailsUrl = mainViewKey
+          ? regression.links[mainViewKey]
+          : getTestDetailsLink(regression?.links)
+        if (!testDetailsUrl) {
           setError('No test details link available for this regression.')
           return
         }
-        const apiIndex = regression.links.test_details.indexOf('/api/')
+        const apiIndex = testDetailsUrl.indexOf('/api/')
         if (apiIndex === -1) {
           setError('Could not parse test details link.')
           return
         }
-        const pathAfterApi = regression.links.test_details.substring(
-          apiIndex + 5
-        )
+        const pathAfterApi = testDetailsUrl.substring(apiIndex + 5)
         let parsed
         try {
           parsed = new URL(pathAfterApi, window.location.origin)

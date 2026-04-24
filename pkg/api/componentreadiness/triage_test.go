@@ -632,15 +632,30 @@ func TestInjectRegressionHATEOASLinks(t *testing.T) {
 			},
 			RegressionTracking: crview.RegressionTracking{Enabled: true},
 		},
+		{
+			Name: "4.22-arm64",
+			BaseRelease: reqopts.RelativeRelease{
+				Release:       reqopts.Release{Name: "4.21"},
+				RelativeStart: "ga-30d",
+				RelativeEnd:   "ga",
+			},
+			SampleRelease: reqopts.RelativeRelease{
+				Release:       reqopts.Release{Name: "4.22"},
+				RelativeStart: "now-7d",
+				RelativeEnd:   "now",
+			},
+			RegressionTracking: crview.RegressionTracking{Enabled: true},
+		},
 	}
 
 	tests := []struct {
-		name       string
-		regression *models.TestRegression
-		expectLink bool
+		name            string
+		regression      *models.TestRegression
+		expectLinkKeys  []string
+		expectNoDetails bool
 	}{
 		{
-			name: "sample release matches view",
+			name: "single active view",
 			regression: &models.TestRegression{
 				ID:          1,
 				Release:     "4.22",
@@ -649,34 +664,103 @@ func TestInjectRegressionHATEOASLinks(t *testing.T) {
 				Component:   "component",
 				Capability:  "capability",
 				Variants:    pq.StringArray{"Platform:aws"},
+				Views:       []models.RegressionView{{TestRegressionID: 1, ViewName: "4.22-main", Active: true}},
 			},
-			expectLink: true,
+			expectLinkKeys: []string{"test_details:4.22-main"},
 		},
 		{
-			name: "fallback base release differs from view",
+			name: "multiple active views produce multiple links",
 			regression: &models.TestRegression{
 				ID:          2,
 				Release:     "4.22",
-				BaseRelease: "4.20",
+				BaseRelease: "4.21",
 				TestID:      "test-456",
 				Component:   "component",
 				Capability:  "capability",
 				Variants:    pq.StringArray{"Platform:aws"},
+				Views: []models.RegressionView{
+					{TestRegressionID: 2, ViewName: "4.22-main", Active: true},
+					{TestRegressionID: 2, ViewName: "4.22-arm64", Active: true},
+				},
 			},
-			expectLink: true,
+			expectLinkKeys: []string{"test_details:4.22-main", "test_details:4.22-arm64"},
 		},
 		{
-			name: "sample release matches no view",
+			name: "inactive views are excluded from links",
 			regression: &models.TestRegression{
 				ID:          3,
-				Release:     "4.99",
-				BaseRelease: "4.98",
+				Release:     "4.22",
+				BaseRelease: "4.21",
 				TestID:      "test-789",
 				Component:   "component",
 				Capability:  "capability",
 				Variants:    pq.StringArray{"Platform:aws"},
+				Views: []models.RegressionView{
+					{TestRegressionID: 3, ViewName: "4.22-main", Active: true},
+					{TestRegressionID: 3, ViewName: "4.22-arm64", Active: false},
+				},
 			},
-			expectLink: false,
+			expectLinkKeys: []string{"test_details:4.22-main"},
+		},
+		{
+			name: "no active views produces no test_details links",
+			regression: &models.TestRegression{
+				ID:          4,
+				Release:     "4.22",
+				BaseRelease: "4.21",
+				TestID:      "test-000",
+				Component:   "component",
+				Capability:  "capability",
+				Variants:    pq.StringArray{"Platform:aws"},
+				Views: []models.RegressionView{
+					{TestRegressionID: 4, ViewName: "4.22-main", Active: false},
+				},
+			},
+			expectNoDetails: true,
+		},
+		{
+			name: "empty views slice produces no test_details links",
+			regression: &models.TestRegression{
+				ID:          5,
+				Release:     "4.99",
+				BaseRelease: "4.98",
+				TestID:      "test-empty",
+				Component:   "component",
+				Capability:  "capability",
+				Variants:    pq.StringArray{"Platform:aws"},
+			},
+			expectNoDetails: true,
+		},
+		{
+			name: "view not found in config is skipped",
+			regression: &models.TestRegression{
+				ID:          6,
+				Release:     "4.22",
+				BaseRelease: "4.21",
+				TestID:      "test-missing-view",
+				Component:   "component",
+				Capability:  "capability",
+				Variants:    pq.StringArray{"Platform:aws"},
+				Views: []models.RegressionView{
+					{TestRegressionID: 6, ViewName: "4.22-main", Active: true},
+					{TestRegressionID: 6, ViewName: "nonexistent-view", Active: true},
+				},
+			},
+			expectLinkKeys: []string{"test_details:4.22-main"},
+		},
+		{
+			name: "fallback base release differs from view",
+			regression: &models.TestRegression{
+				ID:          7,
+				Release:     "4.22",
+				BaseRelease: "4.20",
+				TestID:      "test-fallback",
+				Component:   "component",
+				Capability:  "capability",
+				Variants:    pq.StringArray{"Platform:aws"},
+				Views:       []models.RegressionView{{TestRegressionID: 7, ViewName: "4.22-main", Active: true}},
+			},
+			expectLinkKeys: []string{"test_details:4.22-main"},
 		},
 	}
 
@@ -686,12 +770,158 @@ func TestInjectRegressionHATEOASLinks(t *testing.T) {
 
 			assert.Contains(t, tt.regression.Links, "self")
 
-			if tt.expectLink {
-				assert.Contains(t, tt.regression.Links, "test_details", "expected test_details link to be present")
-				assert.Contains(t, tt.regression.Links["test_details"], "test_details")
+			if tt.expectNoDetails {
+				for key := range tt.regression.Links {
+					assert.NotContains(t, key, "test_details", "expected no test_details links")
+				}
 			} else {
-				assert.NotContains(t, tt.regression.Links, "test_details", "expected test_details link to be absent")
+				for _, expectedKey := range tt.expectLinkKeys {
+					assert.Contains(t, tt.regression.Links, expectedKey, "expected %s link to be present", expectedKey)
+					assert.Contains(t, tt.regression.Links[expectedKey], "test_details", "link should point to test_details endpoint")
+				}
+				// Count test_details links matches expected count
+				detailsCount := 0
+				for key := range tt.regression.Links {
+					if key != "self" {
+						detailsCount++
+					}
+				}
+				assert.Equal(t, len(tt.expectLinkKeys), detailsCount, "number of test_details links should match expected")
 			}
+		})
+	}
+}
+
+func TestFindViewByName(t *testing.T) {
+	views := []crview.View{
+		{Name: "4.22-main"},
+		{Name: "4.22-arm64"},
+		{Name: "4.21-main"},
+	}
+
+	tests := []struct {
+		name       string
+		viewName   string
+		expectOK   bool
+		expectName string
+	}{
+		{
+			name:       "found",
+			viewName:   "4.22-main",
+			expectOK:   true,
+			expectName: "4.22-main",
+		},
+		{
+			name:     "not found",
+			viewName: "nonexistent",
+			expectOK: false,
+		},
+		{
+			name:     "empty name",
+			viewName: "",
+			expectOK: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			view, ok := FindViewByName(tt.viewName, views)
+			assert.Equal(t, tt.expectOK, ok)
+			if tt.expectOK {
+				assert.Equal(t, tt.expectName, view.Name)
+			}
+		})
+	}
+}
+
+func TestGetViewsForTriage(t *testing.T) {
+	tests := []struct {
+		name          string
+		triage        *models.Triage
+		expectedViews []string
+	}{
+		{
+			name: "single regression with active views",
+			triage: &models.Triage{
+				Regressions: []models.TestRegression{
+					{
+						Views: []models.RegressionView{
+							{ViewName: "4.22-main", Active: true},
+							{ViewName: "4.22-arm64", Active: true},
+						},
+					},
+				},
+			},
+			expectedViews: []string{"4.22-main", "4.22-arm64"},
+		},
+		{
+			name: "inactive views are excluded",
+			triage: &models.Triage{
+				Regressions: []models.TestRegression{
+					{
+						Views: []models.RegressionView{
+							{ViewName: "4.22-main", Active: true},
+							{ViewName: "4.22-arm64", Active: false},
+						},
+					},
+				},
+			},
+			expectedViews: []string{"4.22-main"},
+		},
+		{
+			name: "multiple regressions deduplicate views",
+			triage: &models.Triage{
+				Regressions: []models.TestRegression{
+					{
+						Views: []models.RegressionView{
+							{ViewName: "4.22-main", Active: true},
+						},
+					},
+					{
+						Views: []models.RegressionView{
+							{ViewName: "4.22-main", Active: true},
+							{ViewName: "4.22-arm64", Active: true},
+						},
+					},
+				},
+			},
+			expectedViews: []string{"4.22-main", "4.22-arm64"},
+		},
+		{
+			name: "no active views returns empty",
+			triage: &models.Triage{
+				Regressions: []models.TestRegression{
+					{
+						Views: []models.RegressionView{
+							{ViewName: "4.22-main", Active: false},
+						},
+					},
+				},
+			},
+			expectedViews: []string{},
+		},
+		{
+			name: "no regressions returns empty",
+			triage: &models.Triage{
+				Regressions: []models.TestRegression{},
+			},
+			expectedViews: []string{},
+		},
+		{
+			name: "regression with no views returns empty",
+			triage: &models.Triage{
+				Regressions: []models.TestRegression{
+					{Views: []models.RegressionView{}},
+				},
+			},
+			expectedViews: []string{},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := GetViewsForTriage(tt.triage)
+			assert.ElementsMatch(t, tt.expectedViews, result)
 		})
 	}
 }

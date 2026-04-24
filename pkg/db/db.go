@@ -90,6 +90,7 @@ func (d *DB) UpdateSchema(reportEnd *time.Time) error {
 		&models.FeatureGate{},
 		&models.TestRegression{},
 		&models.RegressionJobRun{},
+		&models.RegressionView{},
 		&models.Triage{},
 		&models.AuditLog{},
 		&models.ChatRating{},

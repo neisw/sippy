@@ -829,12 +829,27 @@ export function convertApiUrlToUiUrl(apiUrl) {
   return result
 }
 
+// Extracts the test_details link from HATEOAS links. Prefers the plain
+// "test_details" key (used by regressed tests in component reports), then
+// tries "test_details:<viewName>" if a viewName is given, then falls back
+// to the first "test_details:*" composite key (used by regression objects).
+export function getTestDetailsLink(links, viewName) {
+  if (!links) return null
+  if (links['test_details']) return links['test_details']
+  if (viewName && links[`test_details:${viewName}`]) {
+    return links[`test_details:${viewName}`]
+  }
+  const key = Object.keys(links).find((k) => k.startsWith('test_details:'))
+  return key ? links[key] : null
+}
+
 // Construct a URL with all existing filters utilizing the necessary info from the regressed test.
 // We pass these arguments to the component that generates the test details report.
 export function generateTestDetailsReportLink(
   regressedTest,
   filterVals,
-  expandEnvironment
+  expandEnvironment,
+  viewName
 ) {
   // Generate the URL we would have created for comparison
   const environmentVal = formColumnName({ variants: regressedTest.variants })
@@ -859,18 +874,17 @@ export function generateTestDetailsReportLink(
     `&testName=${safeTestName}`
 
   const sortedGeneratedUrl = sortQueryParams(generatedUrl)
-  // Check if regressedTest.links.test_details is defined
-  if (regressedTest.links?.test_details) {
+  const testDetailsUrl = getTestDetailsLink(regressedTest.links, viewName)
+  if (testDetailsUrl) {
     // Compare the query parameters between the two URLs
     console.log(
       'Comparing query parameters between provided URL and generated URL:'
     )
-    compareUrlQueryParams(regressedTest.links.test_details, sortedGeneratedUrl)
+    compareUrlQueryParams(testDetailsUrl, sortedGeneratedUrl)
 
     // We are assuming the API query params are identical to the UI query params, but we have to adjust the host port and prefix from
     // http://localhost:8080/api/ to http://localhost:3000/sippy-ng/
     // This hack allows us to keep the param generation logic in one place. (server side)
-    const testDetailsUrl = regressedTest.links.test_details
     console.log('testDetailsUrl', testDetailsUrl)
     const modifiedUrl = convertApiUrlToUiUrl(testDetailsUrl)
     console.log('modifiedUrl', modifiedUrl)

@@ -3,6 +3,7 @@ import { CheckCircle, Error as ErrorIcon } from '@mui/icons-material'
 import { CompReadyVarsContext } from './CompReadyVars'
 import { formatDateToSeconds, relativeTime } from '../helpers'
 import {
+  getTestDetailsLink,
   getTriagesAPIUrl,
   hasFailedFixRegression,
   jiraUrlPrefix,
@@ -90,7 +91,7 @@ export default function Triage({ id }) {
         test_id: rt.test_id,
         status: rt.status,
         explanations: rt.explanations || [],
-        test_details_api_url: rt.links?.test_details ?? null,
+        test_details_api_url: getTestDetailsLink(rt.links, view) ?? null,
         regression_id: rt.regression?.id,
         regression_opened: rt.regression?.opened,
         regression_closed: rt.regression?.closed?.valid
