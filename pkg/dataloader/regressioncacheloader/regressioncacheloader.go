@@ -100,7 +100,9 @@ func (l *RegressionCacheLoader) Load() {
 		StableExpiry:         cache.StandardStableExpiryCR,
 	}
 
-	// Group views by sample release so we can handle regression closing per-release
+	// Group views by sample release so we can handle regression closing per-release.
+	// Only regression-tracking views contribute to the closing/deactivation logic;
+	// cache-only views are still processed but don't affect regression lifecycle.
 	releaseResults := map[string]*struct {
 		activeIDs     sets.Set[uint]
 		activeViewMap map[uint][]string
@@ -114,6 +116,28 @@ func (l *RegressionCacheLoader) Load() {
 		vLog := l.logger.WithField("view", view.Name)
 		release := view.SampleRelease.Name
 
+		activeRegs, err := l.processView(ctx, view, cacheOpts, vLog)
+		if err != nil {
+			vLog.WithError(err).Error("error processing view")
+			l.errs = append(l.errs, err)
+			if view.RegressionTracking.Enabled {
+				if _, ok := releaseResults[release]; !ok {
+					releaseResults[release] = &struct {
+						activeIDs     sets.Set[uint]
+						activeViewMap map[uint][]string
+						hadErrors     bool
+					}{
+						activeIDs:     make(sets.Set[uint]),
+						activeViewMap: make(map[uint][]string),
+					}
+				}
+				releaseResults[release].hadErrors = true
+			}
+			continue
+		}
+		if !view.RegressionTracking.Enabled {
+			continue
+		}
 		if _, ok := releaseResults[release]; !ok {
 			releaseResults[release] = &struct {
 				activeIDs     sets.Set[uint]
@@ -123,14 +147,6 @@ func (l *RegressionCacheLoader) Load() {
 				activeIDs:     make(sets.Set[uint]),
 				activeViewMap: make(map[uint][]string),
 			}
-		}
-
-		activeRegs, err := l.processView(ctx, view, cacheOpts, vLog)
-		if err != nil {
-			vLog.WithError(err).Error("error processing view")
-			l.errs = append(l.errs, err)
-			releaseResults[release].hadErrors = true
-			continue
 		}
 		for _, reg := range activeRegs {
 			releaseResults[release].activeIDs.Insert(reg.ID)

@@ -73,19 +73,12 @@ describe('getTestDetailsLink', () => {
     expect(getTestDetailsLink(links)).toBeNull()
   })
 
-  test('viewName takes priority over plain test_details', () => {
+  test('plain test_details takes priority over view-specific keys', () => {
     const links = {
       test_details: '/api/plain',
       'test_details:4.22-main': '/api/main',
     }
-    expect(getTestDetailsLink(links, '4.22-main')).toBe('/api/main')
-  })
-
-  test('plain test_details used when no viewName specified', () => {
-    const links = {
-      test_details: '/api/plain',
-      'test_details:4.22-main': '/api/main',
-    }
+    expect(getTestDetailsLink(links, '4.22-main')).toBe('/api/plain')
     expect(getTestDetailsLink(links)).toBe('/api/plain')
   })
 })

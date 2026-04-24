@@ -231,7 +231,8 @@ func backfillClosedRegressionViews(db *gorm.DB) error {
 		WHERE tr.closed IS NOT NULL
 		AND NOT EXISTS (
 			SELECT 1 FROM regression_views rv WHERE rv.test_regression_id = tr.id
-		)`)
+		)
+		ON CONFLICT (test_regression_id, view_name) DO NOTHING`)
 	if res.Error != nil {
 		return fmt.Errorf("error backfilling closed regression views: %w", res.Error)
 	}

@@ -835,10 +835,10 @@ export function convertApiUrlToUiUrl(apiUrl) {
 // to the first "test_details:*" composite key (used by regression objects).
 export function getTestDetailsLink(links, viewName) {
   if (!links) return null
+  if (links['test_details']) return links['test_details']
   if (viewName) {
     return links[`test_details:${viewName}`] || null
   }
-  if (links['test_details']) return links['test_details']
   const key = Object.keys(links).find((k) => k.startsWith('test_details:'))
   return key ? links[key] : null
 }
