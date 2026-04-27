@@ -909,6 +909,10 @@ func (pl *ProwLoader) createOrUpdateProwJob(ctx context.Context, pj *prow.ProwJo
 			dbProwJob.Variants = newVariants
 			saveDB = true
 		}
+		if dbProwJob.Release != release {
+			dbProwJob.Release = release
+			saveDB = true
+		}
 		if len(dbProwJob.TestGridURL) == 0 {
 			dbProwJob.TestGridURL = pl.generateTestGridURL(release, pj.Spec.Job).String()
 			if len(dbProwJob.TestGridURL) > 0 {
