@@ -769,6 +769,9 @@ func (v *OCPVariantLoader) setJobTier(_ logrus.FieldLogger, variants map[string]
 		{[]string{"alibaba"}, "excluded"},
 		{[]string{"-osde2e-"}, "excluded"},
 
+		// OVN-Kubernetes BGP jobs; candidate tier to collect data while stabilizing
+		{[]string{"-bgp-"}, "candidate"},
+
 		// Experimental new jobs using nested vsphere lvl 2 environment,
 		// not ready to make release blocking yet.
 		{[]string{"-vsphere-host-groups"}, "candidate"},
@@ -807,7 +810,6 @@ func (v *OCPVariantLoader) setJobTier(_ logrus.FieldLogger, variants map[string]
 		{[]string{"aggregator-"}, "hidden"},
 		{[]string{"-out-of-change"}, "hidden"},
 		{[]string{"-sno-fips-recert"}, "hidden"},
-		{[]string{"-bgp-"}, "hidden"},
 		{[]string{"aggregated"}, "hidden"},
 		{[]string{"-cert-rotation-shutdown-"}, "hidden"}, // may want to go to rare at some point
 		{[]string{"-vsphere-insights-runtime"}, "hidden"},
