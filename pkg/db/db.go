@@ -106,13 +106,8 @@ func (d *DB) UpdateSchema(reportEnd *time.Time) error {
 		}
 	}
 
-	// TODO(sgoeddel): This migration logic can be removed once we have a migration that drops the view column from test_regressions
-	if d.DB.Migrator().HasColumn(&models.TestRegression{}, "view") {
-		if err := d.DB.Migrator().DropColumn(&models.TestRegression{}, "view"); err != nil {
-			return err
-		}
-	}
-
+	// TODO(sgoeddel): This is temporary migration logic to backfill closed regressions with their most likely view.
+	// It should be removed after running for the first time.
 	if err := backfillClosedRegressionViews(d.DB); err != nil {
 		return err
 	}

@@ -2,6 +2,7 @@ package regressioncacheloader
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -168,7 +169,6 @@ func (l *RegressionCacheLoader) Load() {
 		if err != nil {
 			l.errs = append(l.errs, err)
 			anyErrors = true
-			continue
 		}
 		allIDs := append(result.activeIDs.UnsortedList(), closedIDs...)
 		if err := l.regressionStore.DeactivateRolledOffViews(allIDs, result.activeViewMap); err != nil {
@@ -443,6 +443,7 @@ func (l *RegressionCacheLoader) closeRolledOffRegressions(release string, active
 	}
 
 	var closedIDs []uint
+	var errs []error
 	now := time.Now()
 	rLog.Infof("checking %d regressions against %d active IDs for closing", len(regressions), activeIDs.Len())
 	for _, reg := range regressions {
@@ -453,12 +454,13 @@ func (l *RegressionCacheLoader) closeRolledOffRegressions(release string, active
 		reg.Closed.Valid = true
 		reg.Closed.Time = now
 		if err := l.regressionStore.UpdateRegression(reg); err != nil {
-			return nil, fmt.Errorf("error closing regression %d: %w", reg.ID, err)
+			errs = append(errs, fmt.Errorf("error closing regression %d: %w", reg.ID, err))
+			continue
 		}
 		closedIDs = append(closedIDs, reg.ID)
 	}
 	rLog.Infof("closed %d regressions", len(closedIDs))
-	return closedIDs, nil
+	return closedIDs, errors.Join(errs...)
 }
 
 func (l *RegressionCacheLoader) buildGenerator(
