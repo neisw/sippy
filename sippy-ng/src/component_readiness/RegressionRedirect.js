@@ -29,10 +29,9 @@ export default function RegressionRedirect() {
               .sort()
           : []
         const mainViewKey = detailKeys.find((k) => k.endsWith('-main'))
-        const testDetailsUrl = mainViewKey
-          ? regression.links[mainViewKey]
-          : detailKeys.length > 0
-          ? regression.links[detailKeys[0]]
+        const selectedKey = mainViewKey || detailKeys[0]
+        const testDetailsUrl = selectedKey
+          ? regression.links[selectedKey]
           : getTestDetailsLink(regression?.links)
         if (!testDetailsUrl) {
           setError('No test details link available for this regression.')
