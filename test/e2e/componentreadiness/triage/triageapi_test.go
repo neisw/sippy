@@ -136,9 +136,11 @@ func Test_TriageAPI(t *testing.T) {
 
 		r := createTestRegressionWithDetails(t, tracker, view, "expanded-test-1", "component-expand", "capability-expand", "TestExpanded1", crtest.ExtremeRegression)
 		defer dbc.DB.Delete(r.Regression)
+		require.NoError(t, tracker.UpsertRegressionView(r.Regression.ID, view.Name))
 
 		r2 := createTestRegressionWithDetails(t, tracker, view, "expanded-test-2", "component-expand", "capability-expand", "TestExpanded2", crtest.SignificantRegression)
 		defer dbc.DB.Delete(r2.Regression)
+		require.NoError(t, tracker.UpsertRegressionView(r2.Regression.ID, view.Name))
 
 		// TODO(sgoeddel): If we ever have a need for another view available within e2e tests we could verify that we could get regressed_tests
 		// for multiple views at once here, but it isn't worth the overhead now.
@@ -538,6 +540,8 @@ func Test_RegressionAPI(t *testing.T) {
 
 	testRegression1 := createTestRegression(t, tracker, view, "faketestid1")
 	defer dbc.DB.Delete(testRegression1)
+	// Associate regression with view so HATEOAS links are generated
+	require.NoError(t, tracker.UpsertRegressionView(testRegression1.ID, view.Name))
 
 	testRegression2 := createTestRegression(t, tracker, view, "faketestid2")
 	defer dbc.DB.Delete(testRegression2)
@@ -568,13 +572,20 @@ func Test_RegressionAPI(t *testing.T) {
 		assert.Equal(t, testRegression1.TestName, foundRegression.TestName)
 		assert.Equal(t, testRegression1.Release, foundRegression.Release)
 
-		// Verify HATEOAS links are present
+		// Verify HATEOAS links are present - test_details links now use composite keys test_details:<view_name>
 		assert.NotNil(t, foundRegression.Links, "regression should have HATEOAS links")
-		assert.Contains(t, foundRegression.Links, "test_details", "regression should have test_details link")
-		require.NotEmpty(t, foundRegression.Links["test_details"], "test_details link should not be empty")
-		testDetailsHREF := foundRegression.Links["test_details"]
+		assert.Contains(t, foundRegression.Links, "self", "regression should have self link")
+
+		// Find any test_details link (format is test_details:<view_name>)
+		var testDetailsHREF string
+		for key, href := range foundRegression.Links {
+			if len(key) > len("test_details:") && key[:len("test_details:")] == "test_details:" {
+				testDetailsHREF = href
+				break
+			}
+		}
+		require.NotEmpty(t, testDetailsHREF, "regression should have at least one test_details:<view> link")
 		assert.Contains(t, testDetailsHREF, fmt.Sprintf("http://%s:%s/api/component_readiness/test_details", os.Getenv("SIPPY_ENDPOINT"), os.Getenv("SIPPY_API_PORT")), "test_details link should point to correct endpoint")
-		// Note: testId will be URL encoded, so we check for the encoded version
 		assert.Contains(t, testDetailsHREF, "testId=", "test_details link should contain testId parameter")
 	})
 	t.Run("error when both view and release are specified", func(t *testing.T) {
@@ -979,51 +990,61 @@ func Test_TriagePotentialMatchingRegressions(t *testing.T) {
 	// Regression 0: Linked to triage, has job runs run-1..run-4
 	testRegressions[0] = createTestRegressionWithDetails(t, tracker, view, "linked-test-1", "component-a", "capability-x", "TestSomething", crtest.ExtremeRegression)
 	defer dbc.DB.Delete(testRegressions[0].Regression)
+	require.NoError(t, tracker.UpsertRegressionView(testRegressions[0].Regression.ID, view.Name))
 	mergeJobRunsForRegression(t, tracker, testRegressions[0].Regression.ID, "run-1", "run-2", "run-3", "run-4")
 
 	// Regression 1: Linked to triage, has job runs run-10..run-13
 	testRegressions[1] = createTestRegressionWithDetails(t, tracker, view, "linked-test-2", "component-b", "capability-y", "TestAnotherOne", crtest.SignificantRegression)
 	defer dbc.DB.Delete(testRegressions[1].Regression)
+	require.NoError(t, tracker.UpsertRegressionView(testRegressions[1].Regression.ID, view.Name))
 	mergeJobRunsForRegression(t, tracker, testRegressions[1].Regression.ID, "run-10", "run-11", "run-12", "run-13")
 
 	// Regression 2: Match by similar name to "TestSomething" (edit distance 2)
 	testRegressions[2] = createTestRegressionWithDetails(t, tracker, view, "match-similar-name", "component-c", "capability-z", "TestSomthng", crtest.ExtremeTriagedRegression) // missing 'e' and 'i'
 	defer dbc.DB.Delete(testRegressions[2].Regression)
+	require.NoError(t, tracker.UpsertRegressionView(testRegressions[2].Regression.ID, view.Name))
 	mergeJobRunsForRegression(t, tracker, testRegressions[2].Regression.ID, "run-90")
 
 	// Regression 3: Match by job run overlap with regression 0 (shares run-1, run-2)
 	testRegressions[3] = createTestRegressionWithDetails(t, tracker, view, "match-overlap", "component-d", "capability-w", "TestDifferent", crtest.SignificantTriagedRegression)
 	defer dbc.DB.Delete(testRegressions[3].Regression)
+	require.NoError(t, tracker.UpsertRegressionView(testRegressions[3].Regression.ID, view.Name))
 	mergeJobRunsForRegression(t, tracker, testRegressions[3].Regression.ID, "run-1", "run-2", "run-50")
 
 	// Regression 4: Match by both similar name AND job run overlap
 	testRegressions[4] = createTestRegressionWithDetails(t, tracker, view, "match-both", "component-e", "capability-v", "TestAnoterOne", crtest.FixedRegression) // missing 'h' from "TestAnotherOne"
 	defer dbc.DB.Delete(testRegressions[4].Regression)
+	require.NoError(t, tracker.UpsertRegressionView(testRegressions[4].Regression.ID, view.Name))
 	mergeJobRunsForRegression(t, tracker, testRegressions[4].Regression.ID, "run-10", "run-11", "run-60") // overlap with regression 1
 
 	// Regression 5: Similar name to regression 0, no job run overlap
 	testRegressions[5] = createTestRegressionWithDetails(t, tracker, view, "match-name-only", "component-f", "capability-u", "TestSomthing", crtest.MissingSample) // edit distance 1
 	defer dbc.DB.Delete(testRegressions[5].Regression)
+	require.NoError(t, tracker.UpsertRegressionView(testRegressions[5].Regression.ID, view.Name))
 	mergeJobRunsForRegression(t, tracker, testRegressions[5].Regression.ID, "run-70")
 
 	// Regression 6: No match - different name, no overlapping job runs
 	testRegressions[6] = createTestRegressionWithDetails(t, tracker, view, "no-match-1", "component-g", "capability-t", "CompletelyDifferentTest", crtest.NotSignificant)
 	defer dbc.DB.Delete(testRegressions[6].Regression)
+	require.NoError(t, tracker.UpsertRegressionView(testRegressions[6].Regression.ID, view.Name))
 	mergeJobRunsForRegression(t, tracker, testRegressions[6].Regression.ID, "run-80", "run-81")
 
 	// Regression 7: No match - name too different (edit distance > 5), no overlap
 	testRegressions[7] = createTestRegressionWithDetails(t, tracker, view, "no-match-2", "component-h", "capability-s", "VeryDifferentTestName", crtest.MissingBasis)
 	defer dbc.DB.Delete(testRegressions[7].Regression)
+	require.NoError(t, tracker.UpsertRegressionView(testRegressions[7].Regression.ID, view.Name))
 	mergeJobRunsForRegression(t, tracker, testRegressions[7].Regression.ID, "run-82")
 
 	// Regression 8: Match by job run overlap only (shares run-3, run-4 with regression 0)
 	testRegressions[8] = createTestRegressionWithDetails(t, tracker, view, "match-overlap-only", "component-i", "capability-r", "TestUnrelated", crtest.MissingBasisAndSample)
 	defer dbc.DB.Delete(testRegressions[8].Regression)
+	require.NoError(t, tracker.UpsertRegressionView(testRegressions[8].Regression.ID, view.Name))
 	mergeJobRunsForRegression(t, tracker, testRegressions[8].Regression.ID, "run-3", "run-4")
 
 	// Regression 9: Similar name to "TestAnotherOne" (edit distance 1)
 	testRegressions[9] = createTestRegressionWithDetails(t, tracker, view, "match-similar-2", "component-j", "capability-q", "TestAnotheOne", crtest.SignificantImprovement) // missing 'r'
 	defer dbc.DB.Delete(testRegressions[9].Regression)
+	require.NoError(t, tracker.UpsertRegressionView(testRegressions[9].Regression.ID, view.Name))
 	mergeJobRunsForRegression(t, tracker, testRegressions[9].Regression.ID, "run-91")
 
 	// Add all test regressions to the component report cache
@@ -1056,7 +1077,7 @@ func Test_TriagePotentialMatchingRegressions(t *testing.T) {
 		require.Equal(t, 2, len(triageResponse.Regressions))
 
 		var potentialMatches []componentreadiness.PotentialMatchingRegression
-		endpoint := fmt.Sprintf("/api/component_readiness/triages/%d/matches?baseRelease=%s&sampleRelease=%s", triageResponse.ID, view.BaseRelease.Release.Name, view.SampleRelease.Release.Name)
+		endpoint := fmt.Sprintf("/api/component_readiness/triages/%d/matches?view=%s", triageResponse.ID, view.Name)
 		err = util.SippyGet(endpoint, &potentialMatches)
 		require.NoError(t, err)
 
@@ -1200,7 +1221,7 @@ func Test_TriagePotentialMatchingRegressions(t *testing.T) {
 		require.NoError(t, err)
 
 		var potentialMatches []componentreadiness.PotentialMatchingRegression
-		endpoint := fmt.Sprintf("/api/component_readiness/triages/%d/matches?baseRelease=%s&sampleRelease=%s", triageResponse.ID, view.BaseRelease.Release.Name, view.SampleRelease.Release.Name)
+		endpoint := fmt.Sprintf("/api/component_readiness/triages/%d/matches?view=%s", triageResponse.ID, view.Name)
 		err = util.SippyGet(endpoint, &potentialMatches)
 		require.NoError(t, err)
 
@@ -1214,7 +1235,7 @@ func Test_TriagePotentialMatchingRegressions(t *testing.T) {
 		assert.False(t, foundRegressionIDs[testRegressions[6].Regression.ID], "Linked regression should not appear in potential matches")
 	})
 
-	t.Run("empty potential matches when release pair does not match any view", func(t *testing.T) {
+	t.Run("error when view does not exist", func(t *testing.T) {
 		defer cleanupAllTriages(dbc)
 
 		triage := models.Triage{
@@ -1230,10 +1251,9 @@ func Test_TriagePotentialMatchingRegressions(t *testing.T) {
 		require.NoError(t, err)
 
 		var potentialMatches []componentreadiness.PotentialMatchingRegression
-		endpoint := fmt.Sprintf("/api/component_readiness/triages/%d/matches?baseRelease=no-such-base&sampleRelease=no-such-sample", triageResponse.ID)
+		endpoint := fmt.Sprintf("/api/component_readiness/triages/%d/matches?view=no-such-view", triageResponse.ID)
 		err = util.SippyGet(endpoint, &potentialMatches)
-		require.NoError(t, err)
-		assert.Empty(t, potentialMatches, "Non-matching release pair should return no potential matches")
+		require.Error(t, err, "Non-existent view should return an error")
 	})
 
 	t.Run("error when triage not found", func(t *testing.T) {

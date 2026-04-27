@@ -201,7 +201,8 @@ export default function TriagedRegressionTestList(props) {
                 url: generateTestDetailsReportLink(
                   rt,
                   props.filterVals,
-                  expandEnvironment
+                  expandEnvironment,
+                  viewName
                 ),
               }
             },

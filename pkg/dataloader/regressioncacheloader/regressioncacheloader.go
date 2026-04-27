@@ -2,6 +2,7 @@ package regressioncacheloader
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -100,10 +101,13 @@ func (l *RegressionCacheLoader) Load() {
 		StableExpiry:         cache.StandardStableExpiryCR,
 	}
 
-	// Group views by sample release so we can handle regression closing per-release
+	// Group views by sample release so we can handle regression closing per-release.
+	// Only regression-tracking views contribute to the closing/deactivation logic;
+	// cache-only views are still processed but don't affect regression lifecycle.
 	releaseResults := map[string]*struct {
-		activeIDs sets.Set[uint]
-		hadErrors bool
+		activeIDs     sets.Set[uint]
+		activeViewMap map[uint][]string
+		hadErrors     bool
 	}{}
 
 	for _, view := range l.views {
@@ -113,24 +117,42 @@ func (l *RegressionCacheLoader) Load() {
 		vLog := l.logger.WithField("view", view.Name)
 		release := view.SampleRelease.Name
 
-		if _, ok := releaseResults[release]; !ok {
-			releaseResults[release] = &struct {
-				activeIDs sets.Set[uint]
-				hadErrors bool
-			}{
-				activeIDs: make(sets.Set[uint]),
-			}
-		}
-
 		activeRegs, err := l.processView(ctx, view, cacheOpts, vLog)
 		if err != nil {
 			vLog.WithError(err).Error("error processing view")
 			l.errs = append(l.errs, err)
-			releaseResults[release].hadErrors = true
+			if view.RegressionTracking.Enabled {
+				if _, ok := releaseResults[release]; !ok {
+					releaseResults[release] = &struct {
+						activeIDs     sets.Set[uint]
+						activeViewMap map[uint][]string
+						hadErrors     bool
+					}{
+						activeIDs:     make(sets.Set[uint]),
+						activeViewMap: make(map[uint][]string),
+					}
+				}
+				releaseResults[release].hadErrors = true
+			}
 			continue
+		}
+		if !view.RegressionTracking.Enabled {
+			continue
+		}
+		if _, ok := releaseResults[release]; !ok {
+			releaseResults[release] = &struct {
+				activeIDs     sets.Set[uint]
+				activeViewMap map[uint][]string
+				hadErrors     bool
+			}{
+				activeIDs:     make(sets.Set[uint]),
+				activeViewMap: make(map[uint][]string),
+			}
 		}
 		for _, reg := range activeRegs {
 			releaseResults[release].activeIDs.Insert(reg.ID)
+			releaseResults[release].activeViewMap[reg.ID] = append(
+				releaseResults[release].activeViewMap[reg.ID], view.Name)
 		}
 	}
 
@@ -143,7 +165,14 @@ func (l *RegressionCacheLoader) Load() {
 			anyErrors = true
 			continue
 		}
-		if err := l.closeStaleRegressions(release, result.activeIDs); err != nil {
+		closedIDs, err := l.closeRolledOffRegressions(release, result.activeIDs)
+		if err != nil {
+			l.errs = append(l.errs, err)
+			anyErrors = true
+		}
+		allIDs := append(result.activeIDs.UnsortedList(), closedIDs...)
+		if err := l.regressionStore.DeactivateRolledOffViews(allIDs, result.activeViewMap); err != nil {
+			l.logger.WithError(err).Errorf("error deactivating rolled-off regression views for release %s", release)
 			l.errs = append(l.errs, err)
 			anyErrors = true
 		}
@@ -190,6 +219,12 @@ func (l *RegressionCacheLoader) processView(
 			l.regressionStore, view, rLog, report)
 		if err != nil {
 			return nil, fmt.Errorf("error syncing regressions for view %s: %w", view.Name, err)
+		}
+		for _, reg := range activeRegressions {
+			if err := l.regressionStore.UpsertRegressionView(reg.ID, view.Name); err != nil {
+				return nil, fmt.Errorf("error upserting view %s for regression %d: %w",
+					view.Name, reg.ID, err)
+			}
 		}
 	}
 
@@ -399,15 +434,16 @@ func (l *RegressionCacheLoader) syncJobRunsFromReports(
 	return nil
 }
 
-func (l *RegressionCacheLoader) closeStaleRegressions(release string, activeIDs sets.Set[uint]) error {
+func (l *RegressionCacheLoader) closeRolledOffRegressions(release string, activeIDs sets.Set[uint]) ([]uint, error) {
 	rLog := l.logger.WithField("release", release)
 
 	regressions, err := l.regressionStore.ListCurrentRegressionsForRelease(release)
 	if err != nil {
-		return fmt.Errorf("error listing regressions for release %s: %w", release, err)
+		return nil, fmt.Errorf("error listing regressions for release %s: %w", release, err)
 	}
 
-	closedCount := 0
+	var closedIDs []uint
+	var errs []error
 	now := time.Now()
 	rLog.Infof("checking %d regressions against %d active IDs for closing", len(regressions), activeIDs.Len())
 	for _, reg := range regressions {
@@ -418,12 +454,13 @@ func (l *RegressionCacheLoader) closeStaleRegressions(release string, activeIDs 
 		reg.Closed.Valid = true
 		reg.Closed.Time = now
 		if err := l.regressionStore.UpdateRegression(reg); err != nil {
-			return fmt.Errorf("error closing regression %d: %w", reg.ID, err)
+			errs = append(errs, fmt.Errorf("error closing regression %d: %w", reg.ID, err))
+			continue
 		}
-		closedCount++
+		closedIDs = append(closedIDs, reg.ID)
 	}
-	rLog.Infof("closed %d regressions", closedCount)
-	return nil
+	rLog.Infof("closed %d regressions", len(closedIDs))
+	return closedIDs, errors.Join(errs...)
 }
 
 func (l *RegressionCacheLoader) buildGenerator(

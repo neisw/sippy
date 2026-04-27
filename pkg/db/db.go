@@ -38,7 +38,7 @@ type log2LogrusWriter struct {
 	entry *log.Entry
 }
 
-func (w log2LogrusWriter) Printf(msg string, args ...interface{}) {
+func (w log2LogrusWriter) Printf(msg string, args ...any) {
 	w.entry.Debugf(msg, args...)
 }
 
@@ -67,7 +67,7 @@ func New(dsn string, logLevel gormlogger.LogLevel) (*DB, error) {
 
 func (d *DB) UpdateSchema(reportEnd *time.Time) error {
 	// List of all models to migrate
-	modelsToMigrate := []interface{}{
+	modelsToMigrate := []any{
 		&models.ReleaseTag{},
 		&models.ReleasePullRequest{},
 		&models.ReleaseRepository{},
@@ -90,6 +90,7 @@ func (d *DB) UpdateSchema(reportEnd *time.Time) error {
 		&models.FeatureGate{},
 		&models.TestRegression{},
 		&models.RegressionJobRun{},
+		&models.RegressionView{},
 		&models.Triage{},
 		&models.AuditLog{},
 		&models.ChatRating{},
@@ -105,11 +106,10 @@ func (d *DB) UpdateSchema(reportEnd *time.Time) error {
 		}
 	}
 
-	// TODO(sgoeddel): This migration logic can be removed once we have a migration that drops the view column from test_regressions
-	if d.DB.Migrator().HasColumn(&models.TestRegression{}, "view") {
-		if err := d.DB.Migrator().DropColumn(&models.TestRegression{}, "view"); err != nil {
-			return err
-		}
+	// TODO(sgoeddel): This is temporary migration logic to backfill closed regressions with their most likely view.
+	// It should be removed after running for the first time.
+	if err := backfillClosedRegressionViews(d.DB); err != nil {
+		return err
 	}
 
 	if err := createAuditLogIndexes(d.DB); err != nil {
@@ -212,6 +212,29 @@ func syncSchema(db *gorm.DB, hashType SchemaHashType, name, desiredSchema, dropS
 		vlog.Debug("no schema update required")
 	}
 	return updateRequired, nil
+}
+
+// backfillClosedRegressionViews associates closed regressions that predate the regression_views
+// table with their most likely view (<release>-main). Historically only -main views had regression
+// tracking enabled, so this is our best approximation. Only targets regressions with no existing
+// view associations; open regressions are handled naturally by the loader.
+func backfillClosedRegressionViews(db *gorm.DB) error {
+	res := db.Exec(`
+		INSERT INTO regression_views (test_regression_id, view_name, active, opened_at, closed_at)
+		SELECT tr.id, tr.release || '-main', false, tr.opened, tr.closed
+		FROM test_regressions tr
+		WHERE tr.closed IS NOT NULL
+		AND NOT EXISTS (
+			SELECT 1 FROM regression_views rv WHERE rv.test_regression_id = tr.id
+		)
+		ON CONFLICT (test_regression_id, view_name) DO NOTHING`)
+	if res.Error != nil {
+		return fmt.Errorf("error backfilling closed regression views: %w", res.Error)
+	}
+	if res.RowsAffected > 0 {
+		log.Infof("backfilled %d closed regressions with release-main view associations", res.RowsAffected)
+	}
+	return nil
 }
 
 // createAuditLogIndexes creates GIN indexes for JSONB columns in audit_logs table

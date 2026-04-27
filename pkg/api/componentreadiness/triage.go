@@ -29,7 +29,7 @@ import (
 
 func GetTriage(dbc *db.DB, id int, req *http.Request) (*models.Triage, error) {
 	existingTriage := &models.Triage{}
-	res := dbc.DB.Preload("Bug").Preload("Regressions.JobRuns").Preload("Regressions").First(existingTriage, id)
+	res := dbc.DB.Preload("Bug").Preload("Regressions.JobRuns").Preload("Regressions.Views").Preload("Regressions").First(existingTriage, id)
 	if res.Error != nil {
 		if errors.Is(res.Error, gorm.ErrRecordNotFound) {
 			return nil, nil
@@ -324,7 +324,7 @@ func ListRegressions(dbc *db.DB, release string, views []crview.View, releases [
 // GetRegression returns the regression with the matching ID
 func GetRegression(dbc *db.DB, id int, views []crview.View, releases []v1.Release, crTimeRoundingFactor time.Duration, req *http.Request) (*models.TestRegression, error) {
 	regression := &models.TestRegression{}
-	res := dbc.DB.Preload("Triages").Preload("JobRuns").First(regression, id)
+	res := dbc.DB.Preload("Triages").Preload("JobRuns").Preload("Views").First(regression, id)
 	if res.Error != nil {
 		if errors.Is(res.Error, gorm.ErrRecordNotFound) {
 			return nil, nil
@@ -427,10 +427,7 @@ func calculateJobRunOverlap(candidateRunIDs sets.Set[string], triageRegression m
 	}
 
 	// Use the smaller set as the denominator so overlap is relative to the regression with fewer runs
-	denominator := candidateRunIDs.Len()
-	if len(triageRegression.JobRuns) < denominator {
-		denominator = len(triageRegression.JobRuns)
-	}
+	denominator := min(candidateRunIDs.Len(), len(triageRegression.JobRuns))
 	overlapPercent := float64(len(sharedIDs)) / float64(denominator) * 100
 
 	return &JobRunOverlap{
@@ -796,23 +793,37 @@ func injectHATEOASLinks(triage *models.Triage, baseURL string) {
 }
 
 // InjectRegressionHATEOASLinks adds restful links clients can follow for this regression record.
+// Per-view test_details links use composite keys: test_details:<view_name>.
 func InjectRegressionHATEOASLinks(regression *models.TestRegression, views []crview.View, releases []v1.Release, crTimeRoundingFactor time.Duration, baseAPIURL, baseFrontendURL string) {
 	regression.Links = map[string]string{
 		"self": fmt.Sprintf(regressionLink, baseAPIURL, regression.ID),
 	}
 
-	view, ok := GetMainViewForSampleRelease(regression.Release, views)
-	if !ok {
-		log.Errorf("no main view found for base: %s, and sample: %s", regression.BaseRelease, regression.Release)
-		return
+	for _, rv := range regression.Views {
+		if !rv.Active {
+			continue
+		}
+		view, ok := FindViewByName(rv.ViewName, views)
+		if !ok {
+			log.Errorf("view %s not found in config for regression %d", rv.ViewName, regression.ID)
+			continue
+		}
+		testDetailsURL, err := generateTestDetailsURLFromRegression(regression, view, releases, crTimeRoundingFactor, baseFrontendURL)
+		if err != nil {
+			log.WithError(err).Errorf("failed to generate test details URL for regression %d and view: %s", regression.ID, view.Name)
+			continue
+		}
+		regression.Links[fmt.Sprintf("test_details:%s", rv.ViewName)] = testDetailsURL
 	}
+}
 
-	testDetailsURL, err := generateTestDetailsURLFromRegression(regression, view, releases, crTimeRoundingFactor, baseFrontendURL)
-	if err != nil {
-		log.WithError(err).Errorf("failed to generate test details URL for regression %d and view: %s", regression.ID, view.Name)
-		return
+func FindViewByName(name string, views []crview.View) (crview.View, bool) {
+	for _, v := range views {
+		if v.Name == name {
+			return v, true
+		}
 	}
-	regression.Links["test_details"] = testDetailsURL
+	return crview.View{}, false
 }
 
 // generateTestDetailsURLFromRegression extracts the required data from a regression and view
@@ -849,37 +860,19 @@ func generateTestDetailsURLFromRegression(regression *models.TestRegression, vie
 	)
 }
 
-// GetViewsForTriage returns all views with regression tracking enabled that have the same base and sample releases
-// as any regression associated with the given triage.
-func GetViewsForTriage(triage *models.Triage, views []crview.View) []string {
+// GetViewsForTriage returns the names of all active views associated with the triage's regressions.
+func GetViewsForTriage(triage *models.Triage) []string {
+	if triage == nil {
+		return nil
+	}
 	matchingViews := make(sets.Set[string])
 	for _, regression := range triage.Regressions {
-		for _, view := range ViewsMatchingReleases(regression.BaseRelease, regression.Release, views) {
-			matchingViews.Insert(view.Name)
+		for _, rv := range regression.Views {
+			if rv.Active {
+				matchingViews.Insert(rv.ViewName)
+			}
 		}
 	}
 
 	return matchingViews.UnsortedList()
-}
-
-// GetMainViewForSampleRelease returns the main view for the given sample release.
-func GetMainViewForSampleRelease(sampleRelease string, views []crview.View) (view crview.View, ok bool) {
-	for _, v := range views {
-		if v.RegressionTracking.Enabled && v.SampleRelease.Name == sampleRelease && strings.HasSuffix(v.Name, "-main") {
-			return v, true
-		}
-	}
-	return crview.View{}, false
-}
-
-// ViewsMatchingReleases returns all views with regression tracking enabled whose base and sample release names match the given params.
-// Order is preserved from the input views slice (same as config file order), so the first returned view is the main view for the release.
-func ViewsMatchingReleases(baseRelease, sampleRelease string, views []crview.View) []crview.View {
-	var matchingViews []crview.View
-	for _, view := range views {
-		if view.RegressionTracking.Enabled && view.BaseRelease.Name == baseRelease && view.SampleRelease.Name == sampleRelease {
-			matchingViews = append(matchingViews, view)
-		}
-	}
-	return matchingViews
 }

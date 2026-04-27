@@ -11,6 +11,7 @@ import {
   useTheme,
 } from '@mui/material'
 import { COMPONENT_READINESS_THRESHOLDS } from '../constants'
+import { getTestDetailsLink } from './CompReadyUtils'
 import { Link } from 'react-router-dom'
 import { makeStyles } from '@mui/styles'
 import { relativeTime } from '../helpers'
@@ -254,14 +255,16 @@ export default function ComponentReadinessIndicator({ release }) {
                 <List className={classes.regressionsList}>
                   {regressions.recent.map((regression, index) => {
                     // Get the test details URL from the regression links
+                    const viewName = `${release}-main`
                     let testDetailsUrl = null
-                    if (regression.links?.test_details) {
-                      // Convert API URL to UI URL
-                      const apiIndex =
-                        regression.links.test_details.indexOf('/api/')
+                    const rawUrl = getTestDetailsLink(
+                      regression.links,
+                      viewName
+                    )
+                    if (rawUrl) {
+                      const apiIndex = rawUrl.indexOf('/api/')
                       if (apiIndex !== -1) {
-                        const pathAfterApi =
-                          regression.links.test_details.substring(apiIndex + 5)
+                        const pathAfterApi = rawUrl.substring(apiIndex + 5)
                         testDetailsUrl = '/' + pathAfterApi
                       }
                     }
