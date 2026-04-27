@@ -328,12 +328,16 @@ func (v *OCPVariantLoader) calculateVariantsForJob(jLog logrus.FieldLogger, jobN
 				// jobs in this range were categorized as ipv4 mistakenly.
 				// For 4.21+, cluster-data.json network stack detection is reliable, so use it.
 				releaseVersion := releaseVersionFromVariants(jLog, variants)
+				releaseLabel := "unknown"
+				if releaseVersion != nil {
+					releaseLabel = releaseVersion.String()
+				}
 				clusterDataReliable, _ := version.NewVersion("4.21")
 				if releaseVersion != nil && releaseVersion.GreaterThanOrEqual(clusterDataReliable) {
-					jLog.Infof("variant mismatch: using %s from cluster-data (release %s >= 4.21)", k, releaseVersion.String())
+					jLog.Infof("variant mismatch: using %s from cluster-data (release %s >= 4.21)", k, releaseLabel)
 					variants[k] = v
 				} else {
-					jLog.Infof("variant mismatch: using %s from job name (release %s < 4.21)", k, releaseVersion.String())
+					jLog.Infof("variant mismatch: using %s from job name (release %s < 4.21)", k, releaseLabel)
 				}
 				continue
 			default:

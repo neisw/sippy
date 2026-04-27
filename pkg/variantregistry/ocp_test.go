@@ -2050,6 +2050,33 @@ func TestVariantSyncer(t *testing.T) {
 				VariantOS:               "rhcos9",
 			},
 		},
+		{
+			job: "periodic-ci-openshift-no-release-in-name-e2e-aws-ovn",
+			variantsFile: map[string]string{
+				"NetworkStack": "IPv6", // cluster-data says IPv6, but no release info so falls back to job name
+			},
+			expected: map[string]string{
+				VariantArch:           "amd64",
+				VariantInstaller:      "ipi",
+				VariantPlatform:       "aws",
+				VariantNetwork:        "ovn",
+				VariantNetworkStack:   "ipv4", // job name wins when release unknown
+				VariantOwner:          "eng",
+				VariantTopology:       "ha",
+				VariantSuite:          "unknown",
+				VariantUpgrade:        VariantNoValue,
+				VariantProcedure:      "none",
+				VariantJobTier:        "candidate",
+				VariantAggregation:    VariantNoValue,
+				VariantSecurityMode:   VariantDefaultValue,
+				VariantFeatureSet:     VariantDefaultValue,
+				VariantNetworkAccess:  VariantDefaultValue,
+				VariantScheduler:      VariantDefaultValue,
+				VariantCGroupMode:     "v2",
+				VariantLayeredProduct: VariantNoValue,
+				VariantOS:             "rhcos9",
+			},
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.job, func(t *testing.T) {
