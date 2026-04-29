@@ -77,9 +77,9 @@ func TestDynamicSuitePatternMatching(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Test the pattern matching logic by checking if any compiled pattern matches
+			// Test the pattern matching logic by checking if any pattern matches
 			matched := false
-			for _, re := range compiledTestSuitePatterns {
+			for _, re := range testSuitePatterns {
 				if tt.suiteName != "" && re.MatchString(tt.suiteName) {
 					matched = true
 					break

@@ -75,38 +75,48 @@ var testSuites = []string{
 	"tracing-uiplugin",
 }
 
-// testSuitePatterns are regular expressions (MatchString) for suite names that should be imported
-// without listing every literal name. Patterns are compiled in init().
-var testSuitePatterns = []string{
+// testSuitePatterns are regular expressions for suite names that should be imported
+// without listing every literal name. Invalid patterns panic at process start.
+var testSuitePatterns = []*regexp.Regexp{
 	// LP interop naming: `lp-interop-<product>--<suffix>`.
-	`^lp-interop-`,
+	regexp.MustCompile(`^lp-interop-`),
 }
 
-var compiledTestSuitePatterns []*regexp.Regexp
-
-// Invalid regexes panic at process start.
-func init() {
-	compiledTestSuitePatterns = make([]*regexp.Regexp, len(testSuitePatterns))
-	for i, p := range testSuitePatterns {
-		compiledTestSuitePatterns[i] = regexp.MustCompile(p)
-	}
-}
-
-// CheckForDynamicSuite checks if the name matches any dynamic suite patterns.
-// If a match is found, creates or retrieves the suite and returns its ID.
-// Returns nil if the name doesn't match any patterns or if creation fails.
-func CheckForDynamicSuite(db *gorm.DB, name string) *uint {
+// GetSuiteID retrieves or creates a suite by name if it matches the import criteria
+// (either in the explicit testSuites list or matches a dynamic pattern).
+// Returns the suite ID on success, nil if the suite should not be imported or on error.
+func GetSuiteID(db *gorm.DB, name string) *uint {
 	if name == "" {
 		return nil
 	}
 
-	for _, re := range compiledTestSuitePatterns {
-		if re.MatchString(name) {
-			return getOrCreateSuite(db, name)
+	// Check if this suite should be imported
+	if !isSuiteImportable(name) {
+		return nil
+	}
+
+	// Get existing or create new suite
+	return getOrCreateSuite(db, name)
+}
+
+// isSuiteImportable checks if a suite name should be imported based on
+// the explicit testSuites list or dynamic patterns.
+func isSuiteImportable(name string) bool {
+	// Check explicit list
+	for _, s := range testSuites {
+		if s == name {
+			return true
 		}
 	}
 
-	return nil
+	// Check patterns
+	for _, re := range testSuitePatterns {
+		if re.MatchString(name) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // getOrCreateSuite finds or creates a suite by name. Returns the suite ID on success, nil on error.
@@ -116,6 +126,12 @@ func getOrCreateSuite(db *gorm.DB, name string) *uint {
 	result := db.Where("name = ?", name).FirstOrCreate(&suite)
 	if result.Error != nil {
 		log.WithError(result.Error).Errorf("failed to get or create suite %q", name)
+		return nil
+	}
+
+	// Validate that we got a valid suite ID
+	if suite.ID == 0 {
+		log.Errorf("suite %q has invalid ID 0", name)
 		return nil
 	}
 

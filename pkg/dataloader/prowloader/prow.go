@@ -1181,18 +1181,9 @@ func (pl *ProwLoader) findSuite(name string) *uint {
 
 	pl.suiteCacheLock.Lock()
 	defer pl.suiteCacheLock.Unlock()
-	suite := &models.Suite{}
-	pl.dbc.DB.Where("name = ?", name).Find(&suite)
-	if suite.ID == 0 {
-		// No row - the exact suite name is not in the database (for example, by populateTestSuitesInDB)
-		// Check if this matches a dynamic suite pattern and create it if so
-		id := db.CheckForDynamicSuite(pl.dbc.DB, name)
-		pl.suiteCache[name] = id
-		return id
-	}
-	id := suite.ID
-	pl.suiteCache[name] = &id
-	return &id
+	id := db.GetSuiteID(pl.dbc.DB, name)
+	pl.suiteCache[name] = id
+	return id
 }
 
 func (pl *ProwLoader) prowJobRunTestsFromGCS(ctx context.Context, pj *prow.ProwJob, id uint, path string, junitPaths []string) ([]*models.ProwJobRunTest, int, sippyprocessingv1.JobOverallResult, error) {
