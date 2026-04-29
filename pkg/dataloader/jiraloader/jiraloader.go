@@ -271,7 +271,9 @@ func (jl *JiraLoader) incidentLoader(authorization string) {
 
 		nextPageToken = response.NextPageToken
 		if nextPageToken == "" {
-			log.Warnf("nextPageToken is empty but isLast is false, stopping pagination")
+			err := errors.Errorf("nextPageToken is empty but isLast is false, stopping pagination  (%d pages, %d processed issues)", pageCount, totalIssues)
+			log.Error(err)
+			jl.errors = append(jl.errors, err)
 			break
 		}
 	}
