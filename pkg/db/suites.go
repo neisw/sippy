@@ -135,9 +135,9 @@ func getOrCreateSuite(db *gorm.DB, name string) *uint {
 		return nil
 	}
 
-	// Log only if we created a new record (RowsAffected > 0)
+	// Found (RowsAffected > 0) even for existing records
 	if result.RowsAffected > 0 {
-		log.WithField("suite", name).Info("created new test suite")
+		log.WithField("suite", name).Info("retrieved test suite")
 	}
 
 	id := suite.ID
