@@ -79,7 +79,9 @@ var testSuites = []string{
 // without listing every literal name. Invalid patterns panic at process start.
 var testSuitePatterns = []*regexp.Regexp{
 	// LP interop naming: `lp-interop-<product>--<suffix>`.
-	regexp.MustCompile(`^lp-interop-`),
+	regexp.MustCompile(`^lp-chaos--`),
+	regexp.MustCompile(`^lp-interop--`),
+	regexp.MustCompile(`^lp-ocp-compat--`),
 }
 
 // GetSuiteID retrieves or creates a suite by name if it matches the import criteria
@@ -125,6 +127,13 @@ func getOrCreateSuite(db *gorm.DB, name string) *uint {
 	suite := models.Suite{Name: name}
 	result := db.Where("name = ?", name).FirstOrCreate(&suite)
 	if result.Error != nil {
+		// Fallback read handles concurrent creator-wins race windows.
+		read := db.Where("name = ?", name).First(&suite)
+		if read.Error != nil {
+			log.WithError(result.Error).Errorf("failed to get or create suite %q", name)
+			return nil
+		}
+
 		log.WithError(result.Error).Errorf("failed to get or create suite %q", name)
 		return nil
 	}
