@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"time"
@@ -229,7 +230,7 @@ func (jl *JiraLoader) incidentLoader(authorization string) {
 		pageCount++
 		apiURL := baseURL
 		if nextPageToken != "" {
-			apiURL = fmt.Sprintf("%s&nextPageToken=%s", baseURL, nextPageToken)
+			apiURL = fmt.Sprintf("%s&nextPageToken=%s", baseURL, url.QueryEscape(nextPageToken))
 		}
 
 		log.Infof("fetching page %d of incidents...", pageCount)
