@@ -283,8 +283,12 @@ func TestOutputs(dbc *db.DB, release, test string, includedVariants, excludedVar
 		Joins("JOIN prow_job_runs ON prow_job_run_tests.prow_job_run_id = prow_job_runs.id").
 		Joins("JOIN prow_jobs ON prow_job_runs.prow_job_id = prow_jobs.id").
 		Where("prow_job_runs.timestamp > current_date - interval '14' day").
+		Where("prow_job_run_test_outputs.prow_job_run_test_timestamp > current_date - interval '14' day").
+		Where("prow_job_run_tests.prow_job_run_timestamp > current_date - interval '14' day").
 		Where("prow_job_run_tests.test_id = (?)", testQuery).
-		Where("prow_jobs.release = ?", release)
+		Where("prow_jobs.release = ?", release).
+		Where("prow_job_run_test_outputs.prow_job_run_test_release = ?", release).
+		Where("prow_job_run_tests.prow_job_run_release = ?", release)
 
 	for _, variant := range includedVariants {
 		q = q.Where("? = any(prow_jobs.variants)", variant)
@@ -314,11 +318,10 @@ func TestDurations(dbc *db.DB, release, test string, includedVariants, excludedV
 	testQuery := dbc.DB.Table("tests").Where("name = ?", test).Select("id")
 	q := dbc.DB.Table("prow_job_run_tests").
 		Joins("JOIN tests ON prow_job_run_tests.test_id = tests.id").
-		Joins("JOIN prow_job_runs ON prow_job_run_tests.prow_job_run_id = prow_job_runs.id").
-		Joins("JOIN prow_jobs ON prow_job_runs.prow_job_id = prow_jobs.id").
-		Where("prow_job_runs.timestamp > current_date - interval '14' day").
+		Joins("JOIN prow_jobs ON prow_jobs.id = prow_job_run_tests.prow_job_id").
+		Where("prow_job_run_tests.prow_job_run_timestamp > current_date - interval '14' day").
 		Where("prow_job_run_tests.test_id = (?)", testQuery).
-		Where("prow_jobs.release = ?", release)
+		Where("prow_job_run_tests.prow_job_run_release = ?", release)
 
 	for _, variant := range includedVariants {
 		q = q.Where("? = any(prow_jobs.variants)", variant)
@@ -330,10 +333,10 @@ func TestDurations(dbc *db.DB, release, test string, includedVariants, excludedV
 
 	res := q.
 		Select(`
-			date("timestamp" AT TIME ZONE 'UTC'::text) as period,
+			date(prow_job_run_tests.prow_job_run_timestamp AT TIME ZONE 'UTC'::text) as period,
 			AVG(prow_job_run_tests.duration) as average_duration`).
-		Group(`date("timestamp" AT TIME ZONE 'UTC'::text)`).
-		Order(`date("timestamp" AT TIME ZONE 'UTC'::text)`).
+		Group(`date(prow_job_run_tests.prow_job_run_timestamp AT TIME ZONE 'UTC'::text)`).
+		Order(`date(prow_job_run_tests.prow_job_run_timestamp AT TIME ZONE 'UTC'::text)`).
 		Scan(&rows)
 
 	for _, row := range rows {
