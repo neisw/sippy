@@ -25,9 +25,10 @@ primary mechanism for partition pruning.
 
 ## Guiding Principles
 
-1. **Add filters, don't replace** — keep existing join-based filters
-   alongside the new local filters. The planner uses whichever is cheaper.
-   Removing them risks behavior change if denormalized data has gaps.
+1. **Add filters first, then replace when validated** — keep existing
+   join-based filters alongside new local filters during rollout.
+   After local denormalized columns are validated, replace old filters
+   and drop no-longer-needed joins where safe.
 
 2. **Drop joins only when safe** — a join can be dropped only if *every*
    column it provides (in SELECT, WHERE, GROUP BY, ORDER BY, FILTER) has

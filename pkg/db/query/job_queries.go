@@ -119,11 +119,12 @@ WITH results AS (
                 coalesce(count(case when succeeded = true AND timestamp BETWEEN @boundary AND @end then 1 end), 0) as current_passes,
                 coalesce(count(case when succeeded = false AND timestamp BETWEEN @boundary AND @end then 1 end), 0) as current_fails,        
                 coalesce(count(case when timestamp BETWEEN @boundary AND @end then 1 end), 0) as current_runs
-        FROM prow_job_runs 
-        JOIN prow_jobs 
-                ON prow_jobs.id = prow_job_runs.prow_job_id                 
+        FROM prow_job_runs
+        JOIN prow_jobs
+                ON prow_jobs.id = prow_job_runs.prow_job_id
                                 AND prow_jobs.release = @release
-                AND timestamp BETWEEN @start AND @end 
+                AND timestamp BETWEEN @start AND @end
+        WHERE prow_job_runs.prow_job_release = @release
         group by variant
 )
 SELECT variant as name,

@@ -283,12 +283,12 @@ func TestOutputs(dbc *db.DB, release, test string, includedVariants, excludedVar
 		Joins("JOIN prow_job_runs ON prow_job_run_tests.prow_job_run_id = prow_job_runs.id").
 		Joins("JOIN prow_jobs ON prow_job_runs.prow_job_id = prow_jobs.id").
 		Where("prow_job_runs.timestamp > current_date - interval '14' day").
+		Where("prow_job_runs.prow_job_release = ?", release).
 		Where("prow_job_run_test_outputs.prow_job_run_test_timestamp > current_date - interval '14' day").
-		Where("prow_job_run_tests.prow_job_run_timestamp > current_date - interval '14' day").
-		Where("prow_job_run_tests.test_id = (?)", testQuery).
-		Where("prow_jobs.release = ?", release).
 		Where("prow_job_run_test_outputs.prow_job_run_test_release = ?", release).
-		Where("prow_job_run_tests.prow_job_run_release = ?", release)
+		Where("prow_job_run_tests.prow_job_run_timestamp > current_date - interval '14' day").
+		Where("prow_job_run_tests.prow_job_run_release = ?", release).
+		Where("prow_job_run_tests.test_id = (?)", testQuery)
 
 	for _, variant := range includedVariants {
 		q = q.Where("? = any(prow_jobs.variants)", variant)

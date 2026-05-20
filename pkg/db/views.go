@@ -344,6 +344,7 @@ FROM
 WHERE
     rt.release_time > (|||TIMENOW||| - '14 days'::interval)
     AND pjrt.prow_job_run_timestamp > (|||TIMENOW||| - '14 days'::interval)
+    AND pjr.timestamp > (|||TIMENOW||| - '14 days'::interval)
     AND rjr.release_tag_id = rt.id
     AND rjr.kind = 'Blocking'
     AND rjr.State = 'Failed'
