@@ -261,7 +261,7 @@ FROM
     LEFT JOIN jira_components ON test_ownerships.jira_component = jira_components.name
     JOIN prow_jobs ON prow_jobs.id = prow_job_run_tests.prow_job_id
 WHERE
-    prow_job_run_tests.created_at >= |||START||| AND prow_job_run_tests.prow_job_run_timestamp >= |||START|||
+    prow_job_run_tests.prow_job_run_timestamp >= |||START|||
 GROUP BY
     tests.id, tests.name, jira_components.name, jira_components.id, suites.name, open_bugs.open_bugs, prow_jobs.variants, prow_job_run_tests.prow_job_run_release
 `
@@ -303,7 +303,7 @@ FROM
     JOIN tests ON tests.id = prow_job_run_tests.test_id
     JOIN prow_jobs ON prow_jobs.id = prow_job_run_tests.prow_job_id
 WHERE
-    prow_job_run_tests.created_at > (|||TIMENOW||| - '14 days'::interval) AND prow_job_run_tests.prow_job_run_timestamp > (|||TIMENOW||| - '14 days'::interval)
+    prow_job_run_tests.prow_job_run_timestamp > (|||TIMENOW||| - '14 days'::interval)
 GROUP BY
     tests.name, tests.id, date(prow_job_run_tests.prow_job_run_timestamp), prow_job_run_tests.prow_job_run_release, prow_jobs.name
 `

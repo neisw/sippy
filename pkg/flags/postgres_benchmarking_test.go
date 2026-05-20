@@ -129,11 +129,9 @@ func getIndividualBenchmarkCases() map[string]benchmarkCase {
 					SELECT DISTINCT t.id, t.name
 					FROM tests t
 					JOIN prow_job_run_tests pjrt ON pjrt.test_id = t.id
-					JOIN prow_job_runs pjr ON pjr.id = pjrt.prow_job_run_id
-					JOIN prow_jobs pj ON pj.id = pjr.prow_job_id
-					WHERE pj.release = ?
+					WHERE pjrt.prow_job_run_release = ?
 					  AND t.name LIKE ?
-					  AND pjrt.created_at > NOW() - INTERVAL '14 days'
+					  AND pjrt.prow_job_run_timestamp > NOW() - INTERVAL '14 days'
 					ORDER BY t.name
 					LIMIT 20`, benchmarkRelease, "%events should not repeat%").Scan(&results)
 				if res.Error != nil {
@@ -269,10 +267,8 @@ func getBenchmarkCases(asOf time.Time) []benchmarkCase {
 					SELECT count(distinct pjrt.prow_job_run_id) as job_runs_count,
 					       count(distinct pjrt.test_id) as test_ids_count
 					FROM prow_job_run_tests pjrt
-					JOIN prow_job_runs pjr ON pjr.id = pjrt.prow_job_run_id
-					JOIN prow_jobs pj ON pj.id = pjr.prow_job_id
-					WHERE pjrt.created_at > ?
-					  AND pj.release = ?`, truncatedTime, benchmarkRelease).Scan(&result)
+					WHERE pjrt.prow_job_run_timestamp > ?
+					  AND pjrt.prow_job_run_release = ?`, truncatedTime, benchmarkRelease).Scan(&result)
 				if res.Error != nil {
 					return res.Error
 				}
@@ -294,10 +290,8 @@ func getBenchmarkCases(asOf time.Time) []benchmarkCase {
 					SELECT count(distinct pjrt.prow_job_run_id) as job_runs_count,
 					       count(distinct pjrt.test_id) as test_ids_count
 					FROM prow_job_run_tests pjrt
-					JOIN prow_job_runs pjr ON pjr.id = pjrt.prow_job_run_id
-					JOIN prow_jobs pj ON pj.id = pjr.prow_job_id
-					WHERE pjrt.created_at > ?
-					  AND pj.release = ?`, truncatedTime, benchmarkRelease).Scan(&result)
+					WHERE pjrt.prow_job_run_timestamp > ?
+					  AND pjrt.prow_job_run_release = ?`, truncatedTime, benchmarkRelease).Scan(&result)
 				if res.Error != nil {
 					return res.Error
 				}
