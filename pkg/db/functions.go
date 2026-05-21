@@ -86,6 +86,8 @@ WITH repo_org_jobs AS (
          INNER JOIN prow_jobs ON prow_job_runs.prow_job_id = prow_jobs.id
     WHERE prow_job_runs.prow_job_release = $1
       AND prow_job_runs.timestamp BETWEEN $2 AND $4
+      AND prow_job_run_prow_pull_requests.prow_job_run_release = $1
+      AND prow_job_run_prow_pull_requests.prow_job_run_timestamp BETWEEN $2 AND $4
     GROUP BY prow_pull_requests.org, prow_pull_requests.repo, prow_jobs.id
 ),
 merged_prs AS
@@ -97,6 +99,8 @@ merged_prs AS
 	WHERE prow_pull_requests.merged_at BETWEEN $2::timestamp AND $4::timestamp
 	AND prow_job_runs.timestamp BETWEEN $2 AND $4
 	AND prow_job_runs.prow_job_release = $1
+	AND prow_job_run_prow_pull_requests.prow_job_run_release = $1
+	AND prow_job_run_prow_pull_requests.prow_job_run_timestamp BETWEEN $2 AND $4
 	AND prow_job_runs.overall_result != 'S'
 	AND prow_job_runs.overall_result != 'A'
     GROUP BY prow_jobs.id, prow_pull_requests.id, prow_pull_requests.link),

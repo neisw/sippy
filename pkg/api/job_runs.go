@@ -144,7 +144,11 @@ func JobsRunsReportFromDB(dbc *db.DB, filterOpts *filter.FilterOptions, release 
 			ids[i] = jr.ID
 		}
 		var annotations []models.ProwJobRunAnnotation
-		if err := dbc.DB.Where("prow_job_run_id IN ?", ids).Find(&annotations).Error; err != nil {
+		annotationQuery := dbc.DB.Where("prow_job_run_id IN ?", ids)
+		if len(release) > 0 {
+			annotationQuery = annotationQuery.Where("prow_job_run_release = ?", release)
+		}
+		if err := annotationQuery.Find(&annotations).Error; err != nil {
 			return nil, err
 		}
 		annotationsByRun := make(map[string]apitype.AnnotationMap)
