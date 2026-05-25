@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/neisw/gopar"
 	log "github.com/sirupsen/logrus"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -31,6 +32,9 @@ type DB struct {
 	// BatchSize is used for how many insertions we should do at once. Postgres supports
 	// a maximum of 2^16 records per insert.
 	BatchSize int
+
+	// Gopar wraps the GORM DB for partition management
+	Gopar *gopar.DB
 }
 
 // log2LogrusWriter bridges gorm logging to logrus logging.
@@ -63,6 +67,7 @@ func New(dsn string, logLevel gormlogger.LogLevel) (*DB, error) {
 	return &DB{
 		DB:        db,
 		BatchSize: 1024,
+		Gopar:     gopar.New(db),
 	}, nil
 }
 
@@ -141,6 +146,74 @@ func (d *DB) UpdateSchema(reportEnd *time.Time) error {
 	}
 
 	return syncPostgresFunctions(d.DB)
+}
+
+// PartitionedTables returns the list of tables that are partitioned
+// and managed by gopar partition lifecycle management.
+func (d *DB) PartitionedTables() []string {
+	return []string{
+		"prow_job_runs_new",
+		"prow_job_run_tests_new",
+		"prow_job_run_test_outputs_new",
+		"prow_job_run_annotations_new",
+		"prow_job_run_prow_pull_requests_new",
+	}
+}
+
+// EnsurePartitions creates missing partitions for all managed partitioned tables.
+// It uses LIST→RANGE nested partitioning where:
+//   - Level 1: LIST partition by release (e.g., "4.17", "4.18")
+//   - Level 2: RANGE sub-partition by timestamp (daily granularity)
+//
+// Parameters:
+//   - releases: List of releases to create partitions for (e.g., ["4.17", "4.18", "4.19"])
+//   - startDate: Start date for partition creation
+//   - endDate: End date for partition creation
+//   - dryRun: If true, only preview what would be created
+//
+// Returns the total number of partitions created across all tables.
+func (d *DB) EnsurePartitions(releases []string, startDate, endDate time.Time, dryRun bool) (int, error) {
+	totalCreated := 0
+
+	for _, tableName := range d.PartitionedTables() {
+		var partitionCol string
+		switch tableName {
+		case "prow_job_runs_new":
+			partitionCol = "timestamp"
+		case "prow_job_run_tests_new":
+			partitionCol = "prow_job_run_timestamp"
+		case "prow_job_run_test_outputs_new":
+			partitionCol = "prow_job_run_test_timestamp"
+		case "prow_job_run_annotations_new":
+			partitionCol = "prow_job_run_timestamp"
+		case "prow_job_run_prow_pull_requests_new":
+			partitionCol = "prow_job_run_timestamp"
+		default:
+			log.Warnf("unknown partitioned table: %s", tableName)
+			continue
+		}
+
+		log.Infof("Creating partitions for %s (releases: %v, dates: %s to %s)",
+			tableName, releases, startDate.Format("2006-01-02"), endDate.Format("2006-01-02"))
+
+		count, err := d.Gopar.Partitions().CreateMissingPartitionsListToRange(
+			tableName,
+			releases,
+			startDate,
+			endDate,
+			partitionCol,
+			true, // usePartmanFormat - use partman-style partition naming
+			dryRun,
+		)
+		if err != nil {
+			return totalCreated, fmt.Errorf("failed to create partitions for %s: %w", tableName, err)
+		}
+
+		totalCreated += count
+		log.Infof("Created %d partitions for %s", count, tableName)
+	}
+
+	return totalCreated, nil
 }
 
 // syncSchema will update generic db resources if their schema has changed. (functions, materialized views, indexes)

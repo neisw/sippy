@@ -169,6 +169,11 @@ func NewLoadCommand() *cobra.Command {
 				}
 			}
 
+			// Ensure partitions exist for all releases (only when InitDatabase is true)
+			if f.InitDatabase && dbErr == nil {
+				ensurePartitionsForReleases(dbc, releaseConfigs)
+			}
+
 			// Sippy Config
 			config, err := f.ConfigFlags.GetConfig()
 			if err != nil {
@@ -482,4 +487,36 @@ func parseProwLoadSince(val string) (time.Time, error) {
 		return time.Time{}, fmt.Errorf("must be an RFC3339 timestamp (e.g. 2024-01-15T00:00:00Z) or a duration (e.g. 72h)")
 	}
 	return time.Now().Add(-d), nil
+}
+
+// ensurePartitionsForReleases creates partitions for all configured releases.
+// It uses a 7 day lookback window plus 2 days forward from today.
+// Errors are logged but ignored to prevent blocking the load process.
+func ensurePartitionsForReleases(dbc *db.DB, releaseConfigs []sippyv1.Release) {
+	// Extract release names from release configs
+	releases := make([]string, 0, len(releaseConfigs))
+	for _, r := range releaseConfigs {
+		releases = append(releases, r.Release)
+	}
+
+	if len(releases) == 0 {
+		log.Warning("No releases found, skipping partition creation")
+		return
+	}
+
+	// Calculate date range: 7 days back, 2 days forward
+	startDate := time.Now().AddDate(0, 0, -7)
+	endDate := time.Now().AddDate(0, 0, 2)
+
+	log.Infof("Ensuring partitions for %d releases from %s to %s",
+		len(releases), startDate.Format("2006-01-02"), endDate.Format("2006-01-02"))
+
+	count, err := dbc.EnsurePartitions(releases, startDate, endDate, false)
+	if err != nil {
+		// Log error but don't fail - partitions may already exist or will be created on-demand
+		log.WithError(err).Warning("Failed to ensure partitions, continuing anyway")
+		return
+	}
+
+	log.Infof("Successfully ensured %d partitions across all partitioned tables", count)
 }
