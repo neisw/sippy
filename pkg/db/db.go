@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/neisw/gopar"
+	"github.com/neisw/gopar/partitioning"
 	log "github.com/sirupsen/logrus"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -33,8 +33,8 @@ type DB struct {
 	// a maximum of 2^16 records per insert.
 	BatchSize int
 
-	// Gopar wraps the GORM DB for partition management
-	Gopar *gopar.DB
+	// GoparPartitions provides partition creation/management operations
+	GoparPartitions *partitioning.DB_PARTITIONS
 }
 
 // log2LogrusWriter bridges gorm logging to logrus logging.
@@ -64,10 +64,17 @@ func New(dsn string, logLevel gormlogger.LogLevel) (*DB, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	// Get underlying sql.DB for gopar
+	sqlDB, err := db.DB()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get sql.DB: %w", err)
+	}
+
 	return &DB{
-		DB:        db,
-		BatchSize: 1024,
-		Gopar:     gopar.New(db),
+		DB:              db,
+		BatchSize:       1024,
+		GoparPartitions: partitioning.NewPartitions(sqlDB),
 	}, nil
 }
 
@@ -196,7 +203,7 @@ func (d *DB) EnsurePartitions(releases []string, startDate, endDate time.Time, d
 		log.Infof("Creating partitions for %s (releases: %v, dates: %s to %s)",
 			tableName, releases, startDate.Format("2006-01-02"), endDate.Format("2006-01-02"))
 
-		count, err := d.Gopar.Partitions().CreateMissingPartitionsListToRange(
+		count, err := d.GoparPartitions.CreateMissingPartitionsListToRange(
 			tableName,
 			releases,
 			startDate,

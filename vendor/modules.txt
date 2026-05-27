@@ -504,7 +504,7 @@ github.com/montanaflynn/stats
 # github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822
 ## explicit
 github.com/munnerz/goautoneg
-# github.com/neisw/gopar v0.0.0-20260525154305-c855d53022b8
+# github.com/neisw/gopar v0.0.0-20260528181235-9a14b6f6f6ad
 ## explicit; go 1.24.1
 github.com/neisw/gopar
 github.com/neisw/gopar/partitioning
