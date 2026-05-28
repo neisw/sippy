@@ -175,7 +175,7 @@ func (pl *ProwLoader) Errors() []error {
 }
 
 // ensurePartitions creates necessary partitions for partitioned tables.
-// It uses the release list from pl.releases and determines the date range based on:
+// It determines the date range based on:
 //   - pl.loadSince if available, otherwise looks back one week
 //   - Creates partitions 2 days forward from now
 func (pl *ProwLoader) ensurePartitions() error {
@@ -191,10 +191,10 @@ func (pl *ProwLoader) ensurePartitions() error {
 	// Create partitions 2 days forward from now
 	endDate := time.Now().AddDate(0, 0, 2)
 
-	log.Infof("Ensuring partitions for releases %v from %s to %s",
-		pl.releases, startDate.Format("2006-01-02"), endDate.Format("2006-01-02"))
+	log.Infof("Ensuring partitions from %s to %s",
+		startDate.Format("2006-01-02"), endDate.Format("2006-01-02"))
 
-	count, err := pl.dbc.EnsurePartitions(pl.releases, startDate, endDate, false)
+	count, err := pl.dbc.EnsurePartitions(startDate, endDate, false)
 	if err != nil {
 		return fmt.Errorf("failed to ensure partitions: %w", err)
 	}

@@ -171,7 +171,10 @@ func NewLoadCommand() *cobra.Command {
 
 			// Ensure partitions exist for all releases (only when InitDatabase is true)
 			if f.InitDatabase && dbErr == nil {
-				ensurePartitionsForReleases(dbc, releaseConfigs)
+				err = ensurePartitionsForReleases(dbc, releaseConfigs)
+				if err != nil {
+					return errors.Wrapf(err, "error ensuring partitions")
+				}
 			}
 
 			// Sippy Config
@@ -489,34 +492,22 @@ func parseProwLoadSince(val string) (time.Time, error) {
 	return time.Now().Add(-d), nil
 }
 
-// ensurePartitionsForReleases creates partitions for all configured releases.
+// ensurePartitionsForReleases creates partitions for partitioned tables.
 // It uses a 7 day lookback window plus 2 days forward from today.
 // Errors are logged but ignored to prevent blocking the load process.
-func ensurePartitionsForReleases(dbc *db.DB, releaseConfigs []sippyv1.Release) {
-	// Extract release names from release configs
-	releases := make([]string, 0, len(releaseConfigs))
-	for _, r := range releaseConfigs {
-		releases = append(releases, r.Release)
-	}
-
-	if len(releases) == 0 {
-		log.Warning("No releases found, skipping partition creation")
-		return
-	}
-
+func ensurePartitionsForReleases(dbc *db.DB, releaseConfigs []sippyv1.Release) error {
 	// Calculate date range: 7 days back, 2 days forward
-	startDate := time.Now().AddDate(0, 0, -7)
+	startDate := time.Now().AddDate(0, 0, -100)
 	endDate := time.Now().AddDate(0, 0, 2)
 
-	log.Infof("Ensuring partitions for %d releases from %s to %s",
-		len(releases), startDate.Format("2006-01-02"), endDate.Format("2006-01-02"))
+	log.Infof("Ensuring partitions from %s to %s",
+		startDate.Format("2006-01-02"), endDate.Format("2006-01-02"))
 
-	count, err := dbc.EnsurePartitions(releases, startDate, endDate, false)
+	count, err := dbc.EnsurePartitions(startDate, endDate, false)
 	if err != nil {
-		// Log error but don't fail - partitions may already exist or will be created on-demand
-		log.WithError(err).Warning("Failed to ensure partitions, continuing anyway")
-		return
+		return err
 	}
 
 	log.Infof("Successfully ensured %d partitions across all partitioned tables", count)
+	return nil
 }

@@ -401,6 +401,12 @@ ALTER TABLE prow_job_run_test_outputs DROP CONSTRAINT IF EXISTS fk_prow_job_run_
 ALTER TABLE prow_job_run_annotations DROP CONSTRAINT IF EXISTS fk_prow_job_run_annotations_prow_job_run_id;
 ALTER TABLE prow_job_run_prow_pull_requests DROP CONSTRAINT IF EXISTS fk_prow_job_run_prow_pull_requests_prow_job_run_id;
 
+-- Rename old sequences to _old (must be done BEFORE renaming tables)
+ALTER SEQUENCE prow_job_runs_id_seq RENAME TO prow_job_runs_old_id_seq;
+ALTER SEQUENCE prow_job_run_annotations_id_seq RENAME TO prow_job_run_annotations_old_id_seq;
+ALTER SEQUENCE prow_job_run_tests_id_seq RENAME TO prow_job_run_tests_old_id_seq;
+ALTER SEQUENCE prow_job_run_test_outputs_id_seq RENAME TO prow_job_run_test_outputs_old_id_seq;
+
 -- Rename old tables to _old
 ALTER TABLE prow_job_runs RENAME TO prow_job_runs_old;
 ALTER TABLE prow_job_run_annotations RENAME TO prow_job_run_annotations_old;
@@ -408,18 +414,18 @@ ALTER TABLE prow_job_run_prow_pull_requests RENAME TO prow_job_run_prow_pull_req
 ALTER TABLE prow_job_run_tests RENAME TO prow_job_run_tests_old;
 ALTER TABLE prow_job_run_test_outputs RENAME TO prow_job_run_test_outputs_old;
 
+-- Rename new sequences to production names
+ALTER SEQUENCE prow_job_runs_new_id_seq RENAME TO prow_job_runs_id_seq;
+ALTER SEQUENCE prow_job_run_annotations_new_id_seq RENAME TO prow_job_run_annotations_id_seq;
+ALTER SEQUENCE prow_job_run_tests_new_id_seq RENAME TO prow_job_run_tests_id_seq;
+ALTER SEQUENCE prow_job_run_test_outputs_new_id_seq RENAME TO prow_job_run_test_outputs_id_seq;
+
 -- Rename new tables to production names
 ALTER TABLE prow_job_runs_new RENAME TO prow_job_runs;
 ALTER TABLE prow_job_run_annotations_new RENAME TO prow_job_run_annotations;
 ALTER TABLE prow_job_run_prow_pull_requests_new RENAME TO prow_job_run_prow_pull_requests;
 ALTER TABLE prow_job_run_tests_new RENAME TO prow_job_run_tests;
 ALTER TABLE prow_job_run_test_outputs_new RENAME TO prow_job_run_test_outputs;
-
--- Rename sequences (PostgreSQL automatically renames sequences with tables, but explicitly confirm)
-ALTER SEQUENCE prow_job_runs_new_id_seq RENAME TO prow_job_runs_id_seq;
-ALTER SEQUENCE prow_job_run_annotations_new_id_seq RENAME TO prow_job_run_annotations_id_seq;
-ALTER SEQUENCE prow_job_run_tests_new_id_seq RENAME TO prow_job_run_tests_id_seq;
-ALTER SEQUENCE prow_job_run_test_outputs_new_id_seq RENAME TO prow_job_run_test_outputs_id_seq;
 
 -- Foreign keys are NOT recreated (see Referential Integrity section)
 
@@ -487,6 +493,128 @@ Run as part of regular health checks or monitoring dashboard.
 3. `migrate_prow_job_run_test_outputs_data.sql` — Data migration for outputs
 4. `sync_sequences.sql` — Sequence syncing after data migration
 5. `swap_tables.sql` — Atomic table swap with FK recreation
+
+### GORM Model Updates (pkg/db/models/prow.go)
+
+**CRITICAL**: After table swap, GORM models MUST be updated to include partition keys in `primaryKey` tags.
+
+With partitioned tables, **all unique constraints must include partition keys**. GORM uses `primaryKey` tags to generate `ON CONFLICT` clauses, so models must match the actual database schema.
+
+**Models requiring updates:**
+
+1. **ProwJobRun** — Add `primaryKey` to `ProwJobRelease` and `Timestamp`
+   ```go
+   type ProwJobRun struct {
+       gorm.Model
+       ProwJobRelease string    `gorm:"primaryKey;index:idx_prow_job_runs_release_timestamp"`
+       Timestamp      time.Time `gorm:"primaryKey;index;index:idx_prow_job_runs_timestamp_date,..."`
+       // ... other fields
+   }
+   ```
+   Database PK: `(id, prow_job_release, timestamp)`
+
+2. **ProwJobRunProwPullRequest** — Add `primaryKey` to partition columns
+   ```go
+   type ProwJobRunProwPullRequest struct {
+       ProwJobRunID        uint      `gorm:"primaryKey"`
+       ProwPullRequestID   uint      `gorm:"primaryKey"`
+       ProwJobRunRelease   string    `gorm:"primaryKey;index:..."`
+       ProwJobRunTimestamp time.Time `gorm:"primaryKey;index:..."`
+   }
+   ```
+   Database PK: `(prow_job_run_id, prow_pull_request_id, prow_job_run_release, prow_job_run_timestamp)`
+
+3. **ProwJobRunAnnotation** — Add `primaryKey` to partition columns
+   ```go
+   type ProwJobRunAnnotation struct {
+       gorm.Model
+       ProwJobRunRelease   string    `gorm:"primaryKey;index:..."`
+       ProwJobRunTimestamp time.Time `gorm:"primaryKey;index:..."`
+       // ... other fields
+   }
+   ```
+   Database PK: `(id, prow_job_run_release, prow_job_run_timestamp)`
+
+4. **ProwJobRunTest** — Add `primaryKey` to partition columns
+   ```go
+   type ProwJobRunTest struct {
+       gorm.Model
+       ProwJobRunTimestamp time.Time `gorm:"primaryKey;index:..."`
+       ProwJobRunRelease   string    `gorm:"primaryKey;index:..."`
+       // ... other fields
+   }
+   ```
+   Database PK: `(id, prow_job_run_release, prow_job_run_timestamp)`
+
+5. **ProwJobRunTestOutput** — Add `primaryKey` to partition columns
+   ```go
+   type ProwJobRunTestOutput struct {
+       gorm.Model
+       ProwJobRunTestTimestamp time.Time `gorm:"primaryKey;index:..."`
+       ProwJobRunTestRelease   string    `gorm:"primaryKey;index:..."`
+       // ... other fields
+   }
+   ```
+   Database PK: `(id, prow_job_run_test_release, prow_job_run_test_timestamp)`
+
+**Foreign Key Relationship Mapping:**
+
+After adding `primaryKey` tags to partition columns, GORM can no longer automatically infer foreign key relationships. You must explicitly define composite foreign keys for all relationships involving partitioned tables.
+
+**Required relationship updates in `pkg/db/models/prow.go`:**
+
+1. **ProwJobRunTest.ProwJobRun** (belongs-to relationship):
+   ```go
+   type ProwJobRunTest struct {
+       gorm.Model
+       ProwJobRunID uint `gorm:"index"`
+       ProwJobRun   ProwJobRun `gorm:"foreignKey:ProwJobRunID,ProwJobRunRelease,ProwJobRunTimestamp;references:ID,ProwJobRelease,Timestamp"`
+       // ... rest of fields
+   }
+   ```
+
+2. **ProwJobRun.Tests** (has-many relationship):
+   ```go
+   type ProwJobRun struct {
+       gorm.Model
+       // ... other fields
+       Tests []ProwJobRunTest `gorm:"foreignKey:ProwJobRunID,ProwJobRunRelease,ProwJobRunTimestamp;references:ID,ProwJobRelease,Timestamp;constraint:OnDelete:CASCADE;"`
+   }
+   ```
+
+3. **ProwJobRun.Annotations** (has-many relationship):
+   ```go
+   type ProwJobRun struct {
+       gorm.Model
+       // ... other fields
+       Annotations []ProwJobRunAnnotation `gorm:"foreignKey:ProwJobRunID,ProwJobRunRelease,ProwJobRunTimestamp;references:ID,ProwJobRelease,Timestamp;constraint:OnDelete:CASCADE;"`
+   }
+   ```
+
+4. **ProwJobRun.PullRequests** (many-to-many relationship):
+   ```go
+   type ProwJobRun struct {
+       gorm.Model
+       // ... other fields
+       PullRequests []ProwPullRequest `gorm:"many2many:prow_job_run_prow_pull_requests;joinForeignKey:ProwJobRunID,ProwJobRunRelease,ProwJobRunTimestamp;joinReferences:ProwPullRequestID;constraint:OnDelete:CASCADE;"`
+   }
+   ```
+
+**Why This is Required:**
+
+1. **Primary Key Tags** - Without `primaryKey` tags on partition columns, GORM generates `ON CONFLICT` clauses targeting only the `id` column, which doesn't match any unique constraint on partitioned tables. Error:
+   ```
+   ERROR: there is no unique or exclusion constraint matching the ON CONFLICT specification (SQLSTATE 42P10)
+   ```
+
+2. **Foreign Key Mapping** - Without explicit `foreignKey` definitions, GORM cannot infer composite foreign key relationships. Error:
+   ```
+   invalid field found for struct ProwJobRunTest's field ProwJobRun: define a valid foreign key for relations or implement the Valuer/Scanner interface
+   ```
+
+**When to Apply:**
+
+Update models **before** running prowloader against partitioned tables (after table swap). Models can be updated during the same deployment as the table swap.
 
 ## Partition Management
 
@@ -653,13 +781,42 @@ psql "$SIPPY_PRODLIKE_DATABASE_DSN" -f scripts/swap_tables.sql
 **Duration:** Seconds (single transaction with table renames)
 **Impact:** Brief write pause (1-2 seconds) while transaction commits
 
-### Step 6: Restart and Verify
+### Step 6: Update GORM Models (Code Change)
+**CRITICAL**: Update GORM models to include partition keys in `primaryKey` tags.
+
+Add `primaryKey` tag to partition columns in `pkg/db/models/prow.go`:
+- `ProwJobRun`: `ProwJobRelease`, `Timestamp`
+- `ProwJobRunProwPullRequest`: `ProwJobRunRelease`, `ProwJobRunTimestamp`
+- `ProwJobRunAnnotation`: `ProwJobRunRelease`, `ProwJobRunTimestamp`
+- `ProwJobRunTest`: `ProwJobRunTimestamp`, `ProwJobRunRelease`
+- `ProwJobRunTestOutput`: `ProwJobRunTestTimestamp`, `ProwJobRunTestRelease`
+
+See "GORM Model Updates" section above for detailed examples.
+
+**Why Required:**
+Without `primaryKey` tags on partition columns, GORM generates invalid `ON CONFLICT` clauses that cause errors:
+```
+ERROR: there is no unique or exclusion constraint matching the ON CONFLICT specification (SQLSTATE 42P10)
+```
+
+**Deploy:**
 ```bash
-# Start sippy serve
+# Rebuild and deploy updated code
+go build ./cmd/sippy
+```
+
+### Step 7: Restart and Verify
+```bash
+# Start sippy serve with updated models
 go run ./cmd/sippy serve --database-dsn "$SIPPY_PRODLIKE_DATABASE_DSN"
 
 # Verify partition pruning in application logs and EXPLAIN ANALYZE
 ```
+
+**Validation:**
+- Watch prowloader logs for successful inserts (no ON CONFLICT errors)
+- Check partition pruning: `EXPLAIN (ANALYZE) SELECT ... WHERE prow_job_run_release = '4.18' AND prow_job_run_timestamp > NOW() - INTERVAL '7 days'`
+- Should see "Subplans Removed: N" in EXPLAIN output
 
 ## Rollback Plan
 
@@ -668,6 +825,12 @@ If issues are discovered after table swap:
 ```sql
 BEGIN;
 
+-- Rename current sequences (production names) back to _new
+ALTER SEQUENCE prow_job_runs_id_seq RENAME TO prow_job_runs_new_id_seq;
+ALTER SEQUENCE prow_job_run_annotations_id_seq RENAME TO prow_job_run_annotations_new_id_seq;
+ALTER SEQUENCE prow_job_run_tests_id_seq RENAME TO prow_job_run_tests_new_id_seq;
+ALTER SEQUENCE prow_job_run_test_outputs_id_seq RENAME TO prow_job_run_test_outputs_new_id_seq;
+
 -- Rename partitioned tables back to _new
 ALTER TABLE prow_job_runs RENAME TO prow_job_runs_new;
 ALTER TABLE prow_job_run_tests RENAME TO prow_job_run_tests_new;
@@ -675,18 +838,18 @@ ALTER TABLE prow_job_run_test_outputs RENAME TO prow_job_run_test_outputs_new;
 ALTER TABLE prow_job_run_annotations RENAME TO prow_job_run_annotations_new;
 ALTER TABLE prow_job_run_prow_pull_requests RENAME TO prow_job_run_prow_pull_requests_new;
 
+-- Restore old sequences from _old to production names
+ALTER SEQUENCE prow_job_runs_old_id_seq RENAME TO prow_job_runs_id_seq;
+ALTER SEQUENCE prow_job_run_annotations_old_id_seq RENAME TO prow_job_run_annotations_id_seq;
+ALTER SEQUENCE prow_job_run_tests_old_id_seq RENAME TO prow_job_run_tests_id_seq;
+ALTER SEQUENCE prow_job_run_test_outputs_old_id_seq RENAME TO prow_job_run_test_outputs_id_seq;
+
 -- Restore old tables to production names
 ALTER TABLE prow_job_runs_old RENAME TO prow_job_runs;
 ALTER TABLE prow_job_run_tests_old RENAME TO prow_job_run_tests;
 ALTER TABLE prow_job_run_test_outputs_old RENAME TO prow_job_run_test_outputs;
 ALTER TABLE prow_job_run_annotations_old RENAME TO prow_job_run_annotations;
 ALTER TABLE prow_job_run_prow_pull_requests_old RENAME TO prow_job_run_prow_pull_requests;
-
--- Rename sequences back
-ALTER SEQUENCE prow_job_runs_id_seq RENAME TO prow_job_runs_new_id_seq;
-ALTER SEQUENCE prow_job_run_annotations_id_seq RENAME TO prow_job_run_annotations_new_id_seq;
-ALTER SEQUENCE prow_job_run_tests_id_seq RENAME TO prow_job_run_tests_new_id_seq;
-ALTER SEQUENCE prow_job_run_test_outputs_id_seq RENAME TO prow_job_run_test_outputs_new_id_seq;
 
 -- Recreate original foreign keys on old tables (if they were dropped)
 ALTER TABLE prow_job_run_tests
@@ -715,6 +878,17 @@ ALTER TABLE prow_job_run_prow_pull_requests
 
 COMMIT;
 ```
+
+**After database rollback, also revert GORM model changes:**
+
+Remove `primaryKey` tags from partition columns in `pkg/db/models/prow.go`:
+- `ProwJobRun`: Remove `primaryKey` from `ProwJobRelease`, `Timestamp` (keep only on `ID`)
+- `ProwJobRunProwPullRequest`: Remove `primaryKey` from `ProwJobRunRelease`, `ProwJobRunTimestamp`
+- `ProwJobRunAnnotation`: Remove `primaryKey` from `ProwJobRunRelease`, `ProwJobRunTimestamp`
+- `ProwJobRunTest`: Remove `primaryKey` from `ProwJobRunTimestamp`, `ProwJobRunRelease`
+- `ProwJobRunTestOutput`: Remove `primaryKey` from `ProwJobRunTestTimestamp`, `ProwJobRunTestRelease`
+
+Rebuild and redeploy with the reverted models to work with non-partitioned tables.
 
 ## Space Savings
 
