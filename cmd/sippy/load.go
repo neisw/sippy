@@ -171,7 +171,10 @@ func NewLoadCommand() *cobra.Command {
 
 			// Ensure partitions exist for all releases (only when InitDatabase is true)
 			if f.InitDatabase && dbErr == nil {
-				ensurePartitionsForReleases(dbc, releaseConfigs)
+				err = ensurePartitionsForReleases(dbc, releaseConfigs)
+				if err != nil {
+					return errors.Wrapf(err, "error ensuring partitions")
+				}
 			}
 
 			// Sippy Config
@@ -492,7 +495,7 @@ func parseProwLoadSince(val string) (time.Time, error) {
 // ensurePartitionsForReleases creates partitions for all configured releases.
 // It uses a 7 day lookback window plus 2 days forward from today.
 // Errors are logged but ignored to prevent blocking the load process.
-func ensurePartitionsForReleases(dbc *db.DB, releaseConfigs []sippyv1.Release) {
+func ensurePartitionsForReleases(dbc *db.DB, releaseConfigs []sippyv1.Release) error {
 	// Extract release names from release configs
 	releases := make([]string, 0, len(releaseConfigs))
 	for _, r := range releaseConfigs {
@@ -501,7 +504,7 @@ func ensurePartitionsForReleases(dbc *db.DB, releaseConfigs []sippyv1.Release) {
 
 	if len(releases) == 0 {
 		log.Warning("No releases found, skipping partition creation")
-		return
+		return nil
 	}
 
 	// Calculate date range: 7 days back, 2 days forward
@@ -513,10 +516,9 @@ func ensurePartitionsForReleases(dbc *db.DB, releaseConfigs []sippyv1.Release) {
 
 	count, err := dbc.EnsurePartitions(releases, startDate, endDate, false)
 	if err != nil {
-		// Log error but don't fail - partitions may already exist or will be created on-demand
-		log.WithError(err).Warning("Failed to ensure partitions, continuing anyway")
-		return
+		return err
 	}
 
 	log.Infof("Successfully ensured %d partitions across all partitioned tables", count)
+	return nil
 }

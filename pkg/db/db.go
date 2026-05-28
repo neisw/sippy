@@ -79,17 +79,6 @@ func New(dsn string, logLevel gormlogger.LogLevel) (*DB, error) {
 }
 
 func (d *DB) UpdateSchema(reportEnd *time.Time) error {
-	// Run versioned migrations (golang-migrate).
-	if err := sippymigrate.RunMigrations(d.DB); err != nil {
-		return err
-	}
-
-	// Register explicit join table so GORM uses our model (with release/timestamp)
-	// instead of auto-generating a bare join table.
-	if err := d.DB.SetupJoinTable(&models.ProwJobRun{}, "PullRequests", &models.ProwJobRunProwPullRequest{}); err != nil {
-		return fmt.Errorf("setup join table ProwJobRun.PullRequests: %w", err)
-	}
-
 	// List of all models to migrate
 	modelsToMigrate := []any{
 		&models.ReleaseTag{},
@@ -97,16 +86,16 @@ func (d *DB) UpdateSchema(reportEnd *time.Time) error {
 		&models.ReleaseRepository{},
 		&models.ReleaseJobRun{},
 		&models.ProwJob{},
-		&models.ProwJobRun{},
-		&models.ProwJobRunAnnotation{},
+		//&models.ProwJobRun{},
+		//&models.ProwJobRunAnnotation{},
 		&models.Test{},
 		&models.Suite{},
-		&models.ProwJobRunTest{},
-		&models.ProwJobRunTestOutput{},
+		//&models.ProwJobRunTest{},
+		//&models.ProwJobRunTestOutput{},
 		&models.APISnapshot{},
 		&models.Bug{},
 		&models.ProwPullRequest{},
-		&models.ProwJobRunProwPullRequest{},
+		//&models.ProwJobRunProwPullRequest{},
 		&models.SchemaHash{},
 		&models.PullRequestComment{},
 		&models.JiraIncident{},
@@ -125,11 +114,27 @@ func (d *DB) UpdateSchema(reportEnd *time.Time) error {
 		&jobrunscan.Symptom{},
 	}
 
-	// Migrate each model
+	// Run GORM AutoMigrate FIRST to create non-partitioned tables (like prow_jobs, prow_pull_requests)
+	// before versioned migrations that may reference them with foreign keys.
 	for _, model := range modelsToMigrate {
 		if err := d.DB.AutoMigrate(model); err != nil {
 			return err
 		}
+	}
+
+	// Register explicit join table so GORM uses our model (with release/timestamp)
+	// instead of auto-generating a bare join table. This must be called AFTER
+	// AutoMigrate creates prow_pull_requests, but BEFORE the migration creates
+	// the partitioned join table.
+	if err := d.DB.SetupJoinTable(&models.ProwJobRun{}, "PullRequests", &models.ProwJobRunProwPullRequest{}); err != nil {
+		return fmt.Errorf("setup join table ProwJobRun.PullRequests: %w", err)
+	}
+
+	// Run versioned migrations (golang-migrate) AFTER AutoMigrate.
+	// This ensures tables like prow_jobs exist before migration 000002 creates
+	// foreign keys to them.
+	if err := sippymigrate.RunMigrations(d.DB); err != nil {
+		return err
 	}
 
 	if err := createAuditLogIndexes(d.DB); err != nil {
@@ -157,13 +162,14 @@ func (d *DB) UpdateSchema(reportEnd *time.Time) error {
 
 // PartitionedTables returns the list of tables that are partitioned
 // and managed by gopar partition lifecycle management.
+// tables will be moved to prod and '_new' suffix removed.
 func (d *DB) PartitionedTables() []string {
 	return []string{
-		"prow_job_runs_new",
-		"prow_job_run_tests_new",
-		"prow_job_run_test_outputs_new",
-		"prow_job_run_annotations_new",
-		"prow_job_run_prow_pull_requests_new",
+		"prow_job_runs",
+		"prow_job_run_tests",
+		"prow_job_run_test_outputs",
+		"prow_job_run_annotations",
+		"prow_job_run_prow_pull_requests",
 	}
 }
 
@@ -182,18 +188,19 @@ func (d *DB) PartitionedTables() []string {
 func (d *DB) EnsurePartitions(releases []string, startDate, endDate time.Time, dryRun bool) (int, error) {
 	totalCreated := 0
 
+	// tables will be moved to prod and '_new' suffix removed.
 	for _, tableName := range d.PartitionedTables() {
 		var partitionCol string
 		switch tableName {
-		case "prow_job_runs_new":
+		case "prow_job_runs":
 			partitionCol = "timestamp"
-		case "prow_job_run_tests_new":
+		case "prow_job_run_tests":
 			partitionCol = "prow_job_run_timestamp"
-		case "prow_job_run_test_outputs_new":
+		case "prow_job_run_test_outputs":
 			partitionCol = "prow_job_run_test_timestamp"
-		case "prow_job_run_annotations_new":
+		case "prow_job_run_annotations":
 			partitionCol = "prow_job_run_timestamp"
-		case "prow_job_run_prow_pull_requests_new":
+		case "prow_job_run_prow_pull_requests":
 			partitionCol = "prow_job_run_timestamp"
 		default:
 			log.Warnf("unknown partitioned table: %s", tableName)
